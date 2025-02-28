@@ -60,13 +60,13 @@ function setup() {
   // Create canvas and add it to the container div
   let canvas = createCanvas(CANVAS_WIDTH, canvasHeightDynamic);
   canvas.parent('canvas-container');
-  
+
   startTime = millis();
-  
+
   // Get references to HTML controls
   setupControlReferences();
   attachControlEventListeners();
-  
+
   initializeState();
 }
 
@@ -82,7 +82,7 @@ function setupControlReferences() {
   processingSpeedSlider = select('#processingSpeedSlider');
   minValueSizeSlider = select('#minValueSizeSlider');
   maxValueSizeSlider = select('#maxValueSizeSlider');
-  
+
   // Get references to input elements
   partitionInput = select('#partitionInput');
   producerInput = select('#producerInput');
@@ -106,7 +106,7 @@ function attachControlEventListeners() {
   processingSpeedSlider.input(() => handleSliderInput(processingSpeedSlider, processingSpeedInput, 'speed'));
   minValueSizeSlider.input(() => handleSliderInput(minValueSizeSlider, minValueSizeInput, 'minSize'));
   maxValueSizeSlider.input(() => handleSliderInput(maxValueSizeSlider, maxValueSizeInput, 'maxSize'));
-  
+
   // Add event listeners to text inputs
   partitionInput.input(() => handleTextInput(partitionInput, partitionSlider, 'partitions'));
   producerInput.input(() => handleTextInput(producerInput, producerSlider, 'producers'));
@@ -124,7 +124,7 @@ function attachControlEventListeners() {
 function handleSliderInput(slider, textInput, type) {
   // Update text input when slider changes
   let value = slider.value();
-  
+
   // Format the value for display
   if (type === 'randomness') {
     textInput.value(parseFloat(value).toFixed(3));
@@ -136,21 +136,21 @@ function handleSliderInput(slider, textInput, type) {
 function handleTextInput(textInput, slider, type) {
   // Validate and update slider when text input changes
   let value = parseFloat(textInput.value());
-  
+
   // Check if input is a valid number
   if (isNaN(value)) {
     // Restore to slider value if invalid
     textInput.value(slider.value());
     return;
   }
-  
+
   // Ensure value is within slider range
   const min = slider.attribute('min');
   const max = slider.attribute('max');
   const step = slider.attribute('step') || 1;
-  
+
   value = constrain(value, min, max);
-  
+
   // Round to nearest step if needed
   if (step != 1) {
     value = Math.round(value / step) * step;
@@ -160,7 +160,7 @@ function handleTextInput(textInput, slider, type) {
       value = Math.round(value);
     }
   }
-  
+
   // Update slider with validated value
   slider.value(value);
   textInput.value(value);
@@ -170,19 +170,19 @@ function initializeState() {
   // Reset counters and state
   globalRecordCounter = 0;
   producerEffects = [];
-  
+
   // Initialize data structures
   initializePartitions();
   initializeProducers();
   initializeConsumers();
-  
+
   // Update canvas height to accommodate partitions
   updateCanvasHeight();
 }
 
 function initializePartitions() {
   partitions = [];
-  
+
   for (let i = 0; i < partitionCount; i++) {
     partitions.push({
       id: i,
@@ -194,18 +194,24 @@ function initializePartitions() {
 
 function initializeProducers() {
   producers = [];
-  
+
+  // Calculate the top and bottom Y coordinates of partitions for centering
+  const topPartitionY = PARTITION_START_Y;
+  const bottomPartitionY = PARTITION_START_Y + (partitionCount - 1) * (PARTITION_HEIGHT + PARTITION_SPACING);
+
   for (let i = 0; i < producerCount; i++) {
-    // Calculate y position
-    const y = PARTITION_START_Y + (partitionCount * (PARTITION_HEIGHT + PARTITION_SPACING)) / 2 * i / (producerCount || 1);
-    
     // Generate a stable color based on index
     const hue = map(i, 0, producerCount, 0, 360);
     const color = colorFromHSB(hue, 70, 90);
-    
+
+    // Initially position producers evenly across the partition range
+    const y = map(i, 0, Math.max(1, producerCount - 1),
+        topPartitionY + PARTITION_HEIGHT / 2,
+        bottomPartitionY + PARTITION_HEIGHT / 2);
+
     producers.push({
       id: i,
-      y: y + PARTITION_HEIGHT / 2,
+      y: y,
       color: color,
       nextProduceTime: frameCount + i * 10, // Stagger initial production
       recordsProduced: 0,
@@ -216,17 +222,20 @@ function initializeProducers() {
       bytesSinceLastUpdate: 0
     });
   }
+
+  // Adjust producer positions to prevent overlap
+  adjustProducerPositions();
 }
 
 function initializeConsumers() {
   consumers = [];
-  
+
   // Create a temporary array to help with partition assignment
   consumers = [];
-  
+
   // Get partition assignments using the rebalance algorithm
   let partitionAssignments = rebalanceConsumerGroup(partitionCount, consumerCount, consumerAssignmentStrategy);
-  
+
   for (let i = 0; i < consumerCount; i++) {
     // Find partitions assigned to this consumer
     const assignedPartitions = [];
@@ -235,18 +244,18 @@ function initializeConsumers() {
         assignedPartitions.push(j);
       }
     }
-    
+
     // Calculate average y position based on assigned partitions
     let avgY = 0;
     for (const partitionId of assignedPartitions) {
       avgY += partitions[partitionId].y + PARTITION_HEIGHT / 2;
     }
     avgY = avgY / Math.max(1, assignedPartitions.length);
-    
+
     // Generate a stable color based on index (distinct from producers)
     const hue = map(i, 0, consumerCount, 180, 360);
     const color = colorFromHSB(hue, 70, 80);
-    
+
     consumers.push({
       id: i,
       y: avgY,
@@ -262,14 +271,122 @@ function initializeConsumers() {
       transitRecords: []
     });
   }
+
+  adjustConsumerPositions();
+}
+
+function adjustConsumerPositions() {
+  // Keep track of original/ideal positions for each consumer
+  const originalPositions = consumers.map(c => c.y);
+
+  // Define minimum spacing between consumer centers
+  const MIN_CONSUMER_SPACING = 70;
+
+  // Sort consumers by their assigned position
+  consumers.sort((a, b) => a.y - b.y);
+
+  // For unassigned consumers (those with no partitions), distribute them evenly
+  const unassignedConsumers = consumers.filter(c => c.assignedPartitions.length === 0);
+  if (unassignedConsumers.length > 0) {
+    const bottomY = PARTITION_START_Y + partitionCount * (PARTITION_HEIGHT + PARTITION_SPACING) + 50;
+    const spacing = MIN_CONSUMER_SPACING;
+
+    for (let i = 0; i < unassignedConsumers.length; i++) {
+      unassignedConsumers[i].y = bottomY + i * spacing;
+    }
+
+    // Resort consumers by position after adjusting unassigned consumers
+    consumers.sort((a, b) => a.y - b.y);
+  }
+
+  // Now fix overlaps while trying to keep each consumer as close as possible to its ideal position
+  for (let i = 1; i < consumers.length; i++) {
+    const prevConsumer = consumers[i-1];
+    const currentConsumer = consumers[i];
+
+    // Check if too close to previous consumer
+    if (currentConsumer.y - prevConsumer.y < MIN_CONSUMER_SPACING) {
+      // Position this consumer below the previous one with minimum spacing
+      currentConsumer.y = prevConsumer.y + MIN_CONSUMER_SPACING;
+    }
+  }
+
+  // Try to maintain assignment-based positioning for consumers with partitions
+  // This helps ensure consumers stay aligned with their partitions
+  const maxIterations = 3; // Limit optimization attempts
+  for (let iter = 0; iter < maxIterations; iter++) {
+    let improved = false;
+
+    for (let i = 0; i < consumers.length; i++) {
+      const consumer = consumers[i];
+
+      // Only try to adjust consumers with assigned partitions
+      if (consumer.assignedPartitions.length > 0) {
+        const originalY = originalPositions[i];
+
+        // Check if we can move this consumer closer to its ideal position
+        // without violating spacing constraints
+        if (i > 0 && i < consumers.length - 1) {
+          // Consumer is between others, check both directions
+          const minY = consumers[i-1].y + MIN_CONSUMER_SPACING; // Can't go above this
+          const maxY = consumers[i+1].y - MIN_CONSUMER_SPACING; // Can't go below this
+
+          if (originalY >= minY && originalY <= maxY) {
+            // Can move directly to original position
+            if (consumer.y !== originalY) {
+              consumer.y = originalY;
+              improved = true;
+            }
+          } else if (originalY < minY && consumer.y > minY) {
+            // Try to move up as much as possible
+            consumer.y = minY;
+            improved = true;
+          } else if (originalY > maxY && consumer.y < maxY) {
+            // Try to move down as much as possible
+            consumer.y = maxY;
+            improved = true;
+          }
+        } else if (i === 0) {
+          // First consumer, can only be constrained from below
+          const maxY = consumers[i+1].y - MIN_CONSUMER_SPACING;
+          if (originalY <= maxY && consumer.y !== originalY) {
+            consumer.y = originalY;
+            improved = true;
+          }
+        } else if (i === consumers.length - 1) {
+          // Last consumer, can only be constrained from above
+          const minY = consumers[i-1].y + MIN_CONSUMER_SPACING;
+          if (originalY >= minY && consumer.y !== originalY) {
+            consumer.y = originalY;
+            improved = true;
+          }
+        }
+      }
+    }
+
+    // If no improvements were made in this iteration, stop
+    if (!improved) break;
+  }
 }
 
 function updateCanvasHeight() {
   const minHeight = 700; // Minimum canvas height
-  const requiredHeight = PARTITION_START_Y + 
-                        partitionCount * (PARTITION_HEIGHT + PARTITION_SPACING) + 
-                        100; // Extra space for bottom margin
-  
+
+  // Find the lowest element (partition or consumer)
+  let lowestY = PARTITION_START_Y + partitionCount * (PARTITION_HEIGHT + PARTITION_SPACING);
+
+  // Check if any consumers are lower
+  for (const consumer of consumers) {
+    // Add some margin below the consumer
+    const consumerBottom = consumer.y + 50;
+    if (consumerBottom > lowestY) {
+      lowestY = consumerBottom;
+    }
+  }
+
+  // Add some margin at the bottom
+  const requiredHeight = lowestY + 100;
+
   canvasHeightDynamic = max(minHeight, requiredHeight);
   resizeCanvas(CANVAS_WIDTH, canvasHeightDynamic);
 }
@@ -288,27 +405,27 @@ function handleControlChanges() {
     partitionCount = parseInt(partitionSlider.value());
     updatePartitions();
   }
-  
+
   if (parseInt(producerSlider.value()) !== producerCount) {
     producerCount = parseInt(producerSlider.value());
     updateProducers();
   }
-  
+
   if (parseInt(consumerSlider.value()) !== consumerCount) {
     consumerCount = parseInt(consumerSlider.value());
     updateConsumers();
   }
-  
+
   // Update simple settings
   producerRate = parseInt(produceRateSlider.value());
   recordKeyRange = parseInt(keyRangeSlider.value());
   producerDelayRandomness = parseFloat(produceRandomnessSlider.value());
   consumerProcessingSpeed = parseFloat(processingSpeedSlider.value());
-  
+
   // Handle value size validation
   let newMinValueSize = parseInt(minValueSizeSlider.value());
   let newMaxValueSize = parseInt(maxValueSizeSlider.value());
-  
+
   // Ensure max value is always >= min value
   if (newMaxValueSize < newMinValueSize) {
     if (recordValueSizeMin !== newMinValueSize) {
@@ -323,7 +440,7 @@ function handleControlChanges() {
       newMinValueSize = newMaxValueSize;
     }
   }
-  
+
   recordValueSizeMin = newMinValueSize;
   recordValueSizeMax = newMaxValueSize;
 }
@@ -337,20 +454,20 @@ function updatePartitions() {
       oldRecords[i] = partitions[i].records;
     }
   }
-  
+
   // Reinitialize partitions
   initializePartitions();
-  
+
   // Restore records where possible
   for (let i = 0; i < partitionCount; i++) {
     if (oldRecords[i]) {
       partitions[i].records = oldRecords[i];
     }
   }
-  
+
   // Reassign consumers
   initializeConsumers();
-  
+
   // Update canvas height
   updateCanvasHeight();
 }
@@ -358,10 +475,10 @@ function updatePartitions() {
 function updateProducers() {
   // Keep the metrics for existing producers
   const oldProducers = [...producers];
-  
+
   // Initialize new producers
   initializeProducers();
-  
+
   // Copy metrics from old producers to new ones where applicable
   for (let i = 0; i < producerCount && i < oldProducers.length; i++) {
     producers[i].recordsProduced = oldProducers[i].recordsProduced;
@@ -369,22 +486,25 @@ function updateProducers() {
     producers[i].produceRate = oldProducers[i].produceRate;
     producers[i].recordsRate = oldProducers[i].recordsRate;
   }
+
+  // Update canvas height in case producers extend beyond current canvas
+  updateCanvasHeight();
 }
 
 function updateConsumers() {
   // Keep the metrics for existing consumers
   const oldConsumers = [...consumers];
-  
+
   // Initialize new consumers
   initializeConsumers();
-  
+
   // Copy metrics from old consumers to new ones where applicable
   for (let i = 0; i < consumerCount && i < oldConsumers.length; i++) {
     consumers[i].recordsConsumed = oldConsumers[i].recordsConsumed;
     consumers[i].bytesConsumed = oldConsumers[i].bytesConsumed;
     consumers[i].consumeRate = oldConsumers[i].consumeRate;
     consumers[i].recordsRate = oldConsumers[i].recordsRate;
-    
+
     // Also handle any transit records (only those for partitions still assigned to this consumer)
     consumers[i].transitRecords = oldConsumers[i].transitRecords.filter(record => {
       return consumers[i].assignedPartitions.includes(record.partitionId);
@@ -397,7 +517,7 @@ function updateSimulation() {
   updateRecordPositions();
   consumeRecords();
   updateTransitRecords();
-  
+
   // Update metrics periodically
   const currentTime = millis();
   if (currentTime - lastMetricsUpdateTime > METRICS_UPDATE_INTERVAL) {
@@ -410,13 +530,13 @@ function updateSimulation() {
 function produceRecords() {
   // Process producer effects first
   updateProducerEffects();
-  
+
   // Check for new records to produce
   for (const producer of producers) {
     if (frameCount >= producer.nextProduceTime) {
       // Create and add a new record
       createRecord(producer);
-      
+
       // Schedule next production time
       scheduleNextProduction(producer);
     }
@@ -439,7 +559,7 @@ function createRecord(producer) {
   const recordKey = int(random(1, recordKeyRange + 1));
   const partitionId = recordKey % partitionCount;
   const recordSpeed = calculateRecordSpeed(recordSize);
-  
+
   // Create the record object
   const record = {
     id: globalRecordCounter++,
@@ -452,19 +572,19 @@ function createRecord(producer) {
     partitionId: partitionId,
     speed: recordSpeed
   };
-  
+
   // Add the record to the partition
   partitions[partitionId].records.push(record);
-  
+
   // Update producer metrics
   producer.recordsProduced++;
   producer.bytesProduced += recordSize;
   producer.producedSinceLastUpdate++;
   producer.bytesSinceLastUpdate += recordSize;
-  
+
   // Add visual effect for production
   addProducerEffect(producer, partitionId);
-  
+
   // Log record production to console
   console.log(`Record produced: {"id": ${record.id}, "key": ${recordKey}, "valueBytes": ${Math.round(recordSize)}, "partition": ${partitionId}, "producer": ${producer.id}}`);
 }
@@ -474,45 +594,45 @@ function calculateRecordRadius(size) {
   if (recordValueSizeMin >= recordValueSizeMax || Math.abs(recordValueSizeMax - recordValueSizeMin) < 2) {
     return (MIN_RECORD_RADIUS + MAX_RECORD_RADIUS) / 2; // Return average radius
   }
-  
+
   // Map size to radius logarithmically
   return map(
-    log(size), 
-    log(recordValueSizeMin), 
-    log(recordValueSizeMax), 
-    MIN_RECORD_RADIUS, 
-    MAX_RECORD_RADIUS
+      log(size),
+      log(recordValueSizeMin),
+      log(recordValueSizeMax),
+      MIN_RECORD_RADIUS,
+      MAX_RECORD_RADIUS
   );
 }
 
 function calculateRecordSpeed(size) {
   // Calculate the radius for this record size
   const radius = calculateRecordRadius(size);
-  
+
   // Calculate the actual travel distance (accounting for radius at start and end)
   const travelDistance = PARTITION_WIDTH - 2 * radius;
-  
+
   // For a 1000-byte record, we want it to take 1 second (60 frames) to traverse
   // For larger records, time should increase proportionally
   // Speed = Distance / Time, where Time = Size / 1000 * 60 frames
   const frames = (size / 1000) * 60;
   const speed = travelDistance / frames * consumerProcessingSpeed;
-  
+
   return speed;
 }
 
 function scheduleNextProduction(producer) {
   // Base time between records in frames (60 frames per second)
   const framesPerRecord = 60 / producerRate;
-  
+
   // Apply randomness in seconds, capped at 1 second maximum
   let randomTimeFrames = 0;
-  
+
   // Apply randomness individually for each producer
   // Use the produceRandomness value which is now constrained to 0-1 seconds
   const randomDelaySec = random(0, producerDelayRandomness);
   randomTimeFrames = randomDelaySec * 60;
-  
+
   // Set next production time
   producer.nextProduceTime = frameCount + int(framesPerRecord + randomTimeFrames);
 }
@@ -527,7 +647,7 @@ function addProducerEffect(producer, partitionId) {
     color: producer.color,
     endTime: millis() + PRODUCER_EFFECT_DURATION
   };
-  
+
   producerEffects.push(effect);
 }
 
@@ -536,12 +656,12 @@ function updateRecordPositions() {
   for (const partition of partitions) {
     // Process records from right to left (newest to oldest)
     // This ensures that records maintain their relative order
-    
+
     // First pass: Process records in FIFO order (oldest first)
     // This makes sure older records move first
     for (let i = 0; i < partition.records.length; i++) {
       const record = partition.records[i];
-      
+
       // Check if we're at the front of the line
       if (i === 0) {
         // First record can always move forward up to the end
@@ -552,7 +672,7 @@ function updateRecordPositions() {
         const recordAhead = partition.records[i - 1];
         const minDistance = recordAhead.radius + record.radius;
         const maxPossibleX = recordAhead.x - minDistance;
-        
+
         // Only move if we won't collide with the record ahead
         if (record.x < maxPossibleX) {
           // Can move, but limited by the record ahead
@@ -560,7 +680,7 @@ function updateRecordPositions() {
         }
       }
     }
-    
+
     // Second pass: Sort records by x position to ensure display order matches processing order
     // This is a safety measure to prevent any records from visually passing each other
     partition.records.sort((a, b) => b.x - a.x);
@@ -571,14 +691,14 @@ function consumeRecords() {
   for (const consumer of consumers) {
     if (frameCount >= consumer.nextConsumeTime) {
       let recordsConsumed = 0;
-      
+
       // Check all assigned partitions for records to consume
       for (const partitionId of consumer.assignedPartitions) {
         if (checkPartitionForConsumption(consumer, partitionId)) {
           recordsConsumed++;
         }
       }
-      
+
       // Set next consume time, with longer delay if we consumed multiple records
       // This helps smooth out consumption rate
       if (recordsConsumed > 1) {
@@ -592,11 +712,11 @@ function consumeRecords() {
 
 function checkPartitionForConsumption(consumer, partitionId) {
   const partition = partitions[partitionId];
-  
+
   // Check if there's a record at the end of the partition
   if (partition.records.length > 0) {
     const firstRecord = partition.records[0];
-    
+
     // Check if the record has reached the end of the partition
     if (firstRecord.x >= PARTITION_START_X + PARTITION_WIDTH - firstRecord.radius) {
       // Remove from partition and start transit to consumer
@@ -614,7 +734,7 @@ function transferRecordToConsumer(consumer, record, partitionId) {
   const startY = partitions[partitionId].y + PARTITION_HEIGHT / 2;
   const endX = CONSUMER_X;
   const endY = consumer.y;
-  
+
   // Add to transit records with path information
   consumer.transitRecords.push({
     ...record,
@@ -632,14 +752,14 @@ function updateTransitRecords() {
   for (const consumer of consumers) {
     for (let i = consumer.transitRecords.length - 1; i >= 0; i--) {
       const record = consumer.transitRecords[i];
-      
+
       // Update progress
       record.progress += 0.05 * consumerProcessingSpeed;
-      
+
       // Calculate new position along the path
       record.x = lerp(record.startX, record.endX, record.progress);
       record.y = lerp(record.startY, record.endY, record.progress);
-      
+
       // If record has reached the consumer, finalize consumption
       if (record.progress >= 1.0) {
         finalizeConsumption(consumer, record);
@@ -660,14 +780,14 @@ function finalizeConsumption(consumer, record) {
 // Metrics calculation functions
 function updateMetrics(currentTime) {
   const elapsedSeconds = (currentTime - lastMetricsUpdateTime) / 1000;
-  
+
   if (elapsedSeconds <= 0) return;
-  
+
   // Update producer metrics
   for (const producer of producers) {
     updateProducerMetrics(producer, elapsedSeconds);
   }
-  
+
   // Update consumer metrics
   for (const consumer of consumers) {
     updateConsumerMetrics(consumer, elapsedSeconds);
@@ -680,7 +800,7 @@ function updateProducerMetrics(producer, elapsedSeconds) {
   if (elapsedSeconds > 0) {
     producer.produceRate = producer.bytesSinceLastUpdate / elapsedSeconds;
     producer.recordsRate = producer.producedSinceLastUpdate / elapsedSeconds;
-    
+
     // If no records were produced in this interval but the system has a target rate,
     // gradually decay the displayed rate toward the target rate
     if (producer.producedSinceLastUpdate === 0 && producer.recordsProduced > 0) {
@@ -689,7 +809,7 @@ function updateProducerMetrics(producer, elapsedSeconds) {
       producer.recordsRate = lerp(producer.recordsRate, targetRate, 0.3);
     }
   }
-  
+
   producer.producedSinceLastUpdate = 0;
   producer.bytesSinceLastUpdate = 0;
 }
@@ -697,20 +817,20 @@ function updateProducerMetrics(producer, elapsedSeconds) {
 function updateConsumerMetrics(consumer, elapsedSeconds) {
   // Calculate B/s instead of KB/s (no division by 1024)
   consumer.consumeRate = consumer.bytesSinceLastUpdate / elapsedSeconds;
-  
+
   // Update record rate based on actual consumption
   if (consumer.consumedSinceLastUpdate > 0) {
     consumer.recordsRate = consumer.consumedSinceLastUpdate / elapsedSeconds;
   } else {
     // If no records were consumed, gradually decrease the rate toward zero
     consumer.recordsRate = consumer.recordsRate * 0.5;
-    
+
     // If the rate gets very small, just set it to zero
     if (consumer.recordsRate < 0.05) {
       consumer.recordsRate = 0;
     }
   }
-  
+
   consumer.consumedSinceLastUpdate = 0;
   consumer.bytesSinceLastUpdate = 0;
 }
@@ -718,15 +838,35 @@ function updateConsumerMetrics(consumer, elapsedSeconds) {
 // ------ RENDERING ------
 function renderSimulation() {
   push();
-  
+
   // Draw simulation components
   drawPartitions();
   drawProducers();
   drawConsumers();
   drawProducerEffects();
-  drawMetrics();
-  
+
   pop(); // End scrolling transform
+}
+
+// Function to prevent producer overlapping
+function adjustProducerPositions() {
+  // Define minimum spacing between producer centers
+  const MIN_PRODUCER_SPACING = 70;
+
+  // Sort producers by their assigned position
+  producers.sort((a, b) => a.y - b.y);
+
+  // Now fix overlaps while trying to maintain even distribution
+  for (let i = 1; i < producers.length; i++) {
+    const prevProducer = producers[i-1];
+    const currentProducer = producers[i];
+
+    // Check if too close to previous producer
+    if (currentProducer.y - prevProducer.y < MIN_PRODUCER_SPACING) {
+      // Position this producer below the previous one with minimum spacing
+      currentProducer.y = prevProducer.y + MIN_PRODUCER_SPACING;
+    }
+  }
 }
 
 function drawPartitions() {
@@ -734,27 +874,27 @@ function drawPartitions() {
   fill(255);
   stroke(0);
   strokeWeight(1);
-  
+
   for (let i = 0; i < partitions.length; i++) {
     const partition = partitions[i];
-    
+
     // Start fresh for each partition to ensure consistent styling
     push();
     fill(255);
     stroke(0);
     strokeWeight(1);
-    
+
     // Draw partition rectangle - consistent style for all partitions
     rect(PARTITION_START_X, partition.y, PARTITION_WIDTH, PARTITION_HEIGHT);
     pop();
-    
+
     // Draw partition label - consistent style and size
     fill(0);
     noStroke();
     textAlign(RIGHT, CENTER);
     textSize(12); // Fixed size for all partition labels
     text(`P${i}`, PARTITION_START_X - 10, partition.y + PARTITION_HEIGHT / 2);
-    
+
     // Draw records in the partition
     drawPartitionRecords(partition);
   }
@@ -767,7 +907,7 @@ function drawPartitionRecords(partition) {
     stroke(0);
     strokeWeight(1);
     ellipse(record.x, partition.y + PARTITION_HEIGHT / 2, record.radius * 2, record.radius * 2);
-    
+
     // Draw record ID inside if large enough
     if (record.radius > 8) {
       fill(255);
@@ -781,64 +921,160 @@ function drawPartitionRecords(partition) {
 
 function drawProducers() {
   for (let i = 0; i < producers.length; i++) {
-    const producer = producers[i];
-    
-    // Draw producer symbol (triangle)
-    fill(producer.color);
-    stroke(0);
-    strokeWeight(1);
-    
-    push();
-    translate(PRODUCER_X, producer.y);
-    triangle(-15, -15, 15, 0, -15, 15);
-    pop();
-    
-    // Draw producer ID inside the triangle, shifted 10px to the left
-    fill(255);
-    noStroke();
-    textAlign(CENTER, CENTER);
-    textSize(10);
-    textStyle(BOLD);
-    text(i, PRODUCER_X - 10, producer.y);
-    textStyle(NORMAL);
+    // Draw each producer as a component
+    drawProducerComponent(producers[i], i);
   }
+}
+
+// New component-based function to draw producer and its metrics
+function drawProducerComponent(producer, index) {
+  push(); // Start a new drawing context
+  translate(PRODUCER_X, producer.y); // Set the origin to the producer position
+
+  // Producer metrics data
+  const metricsData = [
+    `Records: ${producer.recordsProduced}`,
+    `Sum B: ${formatBytes(producer.bytesProduced)}`,
+    `${Math.round(producer.produceRate)} B/s`,
+    `${Math.round(producer.recordsRate * 100) / 100} rec/s`
+  ];
+
+  // Calculate metrics box dimensions
+  textSize(10);
+  const textHeight = 15; // Height per line of text
+  const textPadding = 2; // Padding between text and border
+  const metricsWidth = max(
+      textWidth(metricsData[0]),
+      textWidth(metricsData[1]),
+      textWidth(metricsData[2]),
+      textWidth(metricsData[3])
+  ) + textPadding * 2;
+  const metricsHeight = textHeight * metricsData.length + textPadding * 2;
+
+  // Draw metrics box - positioned to touch the producer triangle
+  noFill();
+  stroke(producer.color);
+  strokeWeight(1);
+  rect(-metricsWidth - 15, -metricsHeight / 2, metricsWidth, metricsHeight);
+
+  // Draw metrics text
+  fill(0);
+  noStroke();
+  textAlign(LEFT, TOP);
+  for (let i = 0; i < metricsData.length; i++) {
+    text(
+        metricsData[i],
+        -metricsWidth - 15 + textPadding,
+        -metricsHeight / 2 + i * textHeight + textPadding
+    );
+  }
+
+  // Draw producer symbol (triangle)
+  fill(producer.color);
+  stroke(0);
+  strokeWeight(1);
+  triangle(-15, -15, 15, 0, -15, 15);
+
+  // Draw producer ID inside the triangle
+  fill(255);
+  noStroke();
+  textAlign(CENTER, CENTER);
+  textSize(10);
+  textStyle(BOLD);
+  text(index, -10, 0);
+  textStyle(NORMAL);
+
+  pop(); // Restore the drawing context
 }
 
 function drawConsumers() {
   for (let i = 0; i < consumers.length; i++) {
     const consumer = consumers[i];
-    
-    // Get the fixed y position (established in initialization)
-    const avgY = consumer.y;
-    
-    // Draw consumer symbol (rectangle)
-    fill(consumer.color);
-    stroke(0);
-    strokeWeight(1);
-    rect(CONSUMER_X, avgY - 15, 30, 30);
-    
-    // Draw consumer ID inside the rectangle
-    fill(255);
-    noStroke();
-    textAlign(CENTER, CENTER);
-    textSize(10);
-    textStyle(BOLD);
-    text(i, CONSUMER_X + 15, avgY);
-    textStyle(NORMAL);
-    
+
+    // Draw consumer as a component with its metrics
+    drawConsumerComponent(consumer, i);
+
     // Draw lines between consumer and its assigned partitions
-    stroke(consumer.color);
-    strokeWeight(1.8);
-    drawingContext.setLineDash([5, 5]);
-    for (const partitionId of consumer.assignedPartitions) {
-      const partitionY = partitions[partitionId].y + PARTITION_HEIGHT / 2;
-      line(PARTITION_START_X + PARTITION_WIDTH, partitionY, CONSUMER_X, avgY);
-    }
-    drawingContext.setLineDash([]);
-    
+    drawConsumerPartitionConnections(consumer);
+
     // Draw transit records
     drawTransitRecords(consumer);
   }
+}
+
+// Component-based function to draw consumer and its metrics
+function drawConsumerComponent(consumer, index) {
+  const consumerY = consumer.y;
+
+  push(); // Start a new drawing context
+  translate(CONSUMER_X, consumerY); // Set the origin to the consumer position
+
+  // Consumer metrics data
+  const metricsData = [
+    `Records: ${consumer.recordsConsumed}`,
+    `Sum B: ${formatBytes(consumer.bytesConsumed)}`,
+    `${Math.round(consumer.consumeRate)} B/s`,
+    `${Math.round(consumer.recordsRate * 100) / 100} rec/s`
+  ];
+
+  // Calculate metrics box dimensions
+  textSize(10);
+  const textHeight = 15; // Height per line of text
+  const textPadding = 2; // Padding between text and border
+  const metricsWidth = max(
+      textWidth(metricsData[0]),
+      textWidth(metricsData[1]),
+      textWidth(metricsData[2]),
+      textWidth(metricsData[3])
+  ) + textPadding * 2;
+  const metricsHeight = textHeight * metricsData.length + textPadding * 2;
+
+  // Use gray color for unassigned consumers
+  const borderColor = consumer.assignedPartitions.length === 0 ? color(200) : consumer.color;
+
+  // Draw metrics box - vertically centered with the consumer square
+  noFill();
+  stroke(borderColor);
+  strokeWeight(1);
+  rect(30, -metricsHeight/2, metricsWidth, metricsHeight);
+
+  // Draw metrics text
+  fill(0);
+  noStroke();
+  textAlign(LEFT, TOP);
+  for (let i = 0; i < metricsData.length; i++) {
+    text(metricsData[i], 30 + textPadding, -metricsHeight/2 + textPadding + i * textHeight);
+  }
+
+  // Draw consumer rectangle
+  fill(consumer.color);
+  stroke(0);
+  strokeWeight(1);
+  rect(0, -15, 30, 30);
+
+  // Draw consumer ID inside rectangle
+  fill(255);
+  noStroke();
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  text(index, 15, 0);
+  textStyle(NORMAL);
+
+  pop(); // Restore the drawing context
+}
+
+// Draw lines between consumer and partitions
+function drawConsumerPartitionConnections(consumer) {
+  stroke(consumer.color);
+  strokeWeight(1.8);
+  drawingContext.setLineDash([5, 5]);
+
+  for (const partitionId of consumer.assignedPartitions) {
+    const partitionY = partitions[partitionId].y + PARTITION_HEIGHT / 2;
+    line(PARTITION_START_X + PARTITION_WIDTH, partitionY, CONSUMER_X, consumer.y);
+  }
+
+  drawingContext.setLineDash([]);
 }
 
 function drawTransitRecords(consumer) {
@@ -848,7 +1084,7 @@ function drawTransitRecords(consumer) {
     stroke(0);
     strokeWeight(1);
     ellipse(record.x, record.y, record.radius * 2, record.radius * 2);
-    
+
     // Draw record key inside if large enough
     if (record.radius > 8) {
       fill(255);
@@ -868,41 +1104,6 @@ function drawProducerEffects() {
     stroke(effect.color);
     line(effect.startX, effect.startY, effect.endX, effect.endY);
     pop();
-  }
-}
-
-function drawMetrics() {
-  // Draw producer metrics
-  for (let i = 0; i < producers.length; i++) {
-    const producer = producers[i];
-    const metricsY = producer.y - 20;
-    
-    fill(0);
-    noStroke();
-    textAlign(LEFT, CENTER); // Changed from RIGHT to LEFT for better visibility
-    textSize(10);
-    
-    // Moved metrics further left to ensure visibility and avoid overlap with producer shape
-    text(`Records: ${producer.recordsProduced}`, PRODUCER_X - 100, metricsY);
-    text(`Sum B: ${formatBytes(producer.bytesProduced)}`, PRODUCER_X - 100, metricsY + 15);
-    text(`${Math.round(producer.produceRate)} B/s`, PRODUCER_X - 100, metricsY + 30);
-    text(`${Math.round(producer.recordsRate * 100) / 100} rec/s`, PRODUCER_X - 100, metricsY + 45);
-  }
-  
-  // Draw consumer metrics
-  for (let i = 0; i < consumers.length; i++) {
-    const consumer = consumers[i];
-    const metricsY = consumer.y - 20;
-    
-    fill(0);
-    noStroke();
-    textAlign(LEFT, CENTER);
-    textSize(10);
-    
-    text(`Records: ${consumer.recordsConsumed}`, CONSUMER_X + 45, metricsY);
-    text(`Sum B: ${formatBytes(consumer.bytesConsumed)}`, CONSUMER_X + 45, metricsY + 15);
-    text(`${Math.round(consumer.consumeRate)} B/s`, CONSUMER_X + 45, metricsY + 30);
-    text(`${Math.round(consumer.recordsRate * 100) / 100} rec/s`, CONSUMER_X + 45, metricsY + 45);
   }
 }
 
@@ -927,54 +1128,54 @@ function colorFromHSB(h, s, b) {
 function rebalanceConsumerGroup(partitions, consumerCount, strategy = assignmentStrategy) {
   // Array to store partition assignments (which consumer owns which partition)
   let assignments = new Array(partitions).fill(-1);
-  
+
   if (consumerCount <= 0) return assignments;
-  
+
   switch (strategy) {
     case 'range':
       // Range strategy: divide partitions into ranges and assign each range to a consumer
       // This is similar to Kafka's default RangeAssignor
       const partitionsPerConsumer = Math.floor(partitions / consumerCount);
       const remainder = partitions % consumerCount;
-      
+
       let startIndex = 0;
       for (let i = 0; i < consumerCount; i++) {
         // Calculate how many partitions this consumer gets
         const numPartitions = partitionsPerConsumer + (i < remainder ? 1 : 0);
-        
+
         // Assign this range of partitions to the consumer
         for (let j = 0; j < numPartitions; j++) {
           if (startIndex + j < partitions) {
             assignments[startIndex + j] = i;
           }
         }
-        
+
         startIndex += numPartitions;
       }
       break;
-      
+
     case 'sticky':
       // Sticky strategy: attempt to maintain previous assignments when possible
       // In this simplified version, we distribute partitions evenly
       // but try to maintain a locality pattern (adjacent partitions)
       const partitionsPerConsumerSticky = Math.ceil(partitions / consumerCount);
-      
+
       for (let i = 0; i < partitions; i++) {
         const consumerId = Math.floor(i / partitionsPerConsumerSticky);
         assignments[i] = consumerId < consumerCount ? consumerId : consumerCount - 1;
       }
       break;
-      
+
     case 'cooperative-sticky':
       // Cooperative sticky strategy: similar to sticky but models the cooperative rebalancing
       // In a real implementation, this would be more complex with phased reassignments
       // For simulation, we'll create a balanced but slightly clustered distribution
-      
+
       // First, do round-robin assignment
       for (let i = 0; i < partitions; i++) {
         assignments[i] = i % consumerCount;
       }
-      
+
       // Then, adjust to create some locality clustering
       // This simulates the "stickiness" aspect
       if (partitions >= consumerCount * 2) {
@@ -982,7 +1183,7 @@ function rebalanceConsumerGroup(partitions, consumerCount, strategy = assignment
           // Try to give each consumer a small cluster of partitions
           const clusterSize = Math.floor(partitions / consumerCount / 2);
           const startPos = c * clusterSize;
-          
+
           for (let i = 0; i < clusterSize && startPos + i < partitions; i++) {
             // Only reassign if it doesn't create too much imbalance
             const currentOwner = assignments[startPos + i];
@@ -992,7 +1193,7 @@ function rebalanceConsumerGroup(partitions, consumerCount, strategy = assignment
               for (let j = 0; j < partitions; j++) {
                 consumerPartitionCounts[assignments[j]]++;
               }
-              
+
               // Only reassign if it doesn't create too much imbalance
               if (consumerPartitionCounts[currentOwner] > consumerPartitionCounts[c]) {
                 assignments[startPos + i] = c;
@@ -1002,7 +1203,7 @@ function rebalanceConsumerGroup(partitions, consumerCount, strategy = assignment
         }
       }
       break;
-      
+
     case 'round-robin':
     default:
       // Round-robin strategy: distribute partitions evenly across consumers
@@ -1012,19 +1213,19 @@ function rebalanceConsumerGroup(partitions, consumerCount, strategy = assignment
       }
       break;
   }
-  
+
   return assignments;
 }
 
 function draw() {
   background(240);
-  
+
   // Handle events
   handleControlChanges();
-  
+
   // Update simulation
   updateSimulation();
-  
+
   // Render simulation
   renderSimulation();
 }
