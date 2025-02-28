@@ -299,7 +299,7 @@ function handleTextInput(textInput, slider, type) {
   value = constrain(value, min, max);
 
   // Round to nearest step if needed
-  if (step != 1) {
+  if (step !== 1) {
     value = Math.round(value / step) * step;
   } else {
     // For integer sliders, ensure integer value
@@ -480,10 +480,9 @@ function adjustConsumerPositions() {
   const unassignedConsumers = consumers.filter(c => c.assignedPartitions.length === 0);
   if (unassignedConsumers.length > 0) {
     const bottomY = CANVAS_PARTITION_START_Y + partitionCount * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING) + 50;
-    const spacing = MIN_CONSUMER_SPACING;
 
     for (let i = 0; i < unassignedConsumers.length; i++) {
-      unassignedConsumers[i].y = bottomY + i * spacing;
+      unassignedConsumers[i].y = bottomY + i * MIN_CONSUMER_SPACING;
     }
 
     // Resort consumers by position after adjusting unassigned consumers
@@ -871,8 +870,7 @@ function calculateRecordSpeed(size) {
   const radius = calculateRecordRadius(size);
 
   // Smaller records move slightly faster for visual variety
-  const adjustedSpeed = baseSpeed * (1 - (radius - CANVAS_RECORD_RADIUS_MIN) / (CANVAS_RECORD_RADIUS_MAX - CANVAS_RECORD_RADIUS_MIN) * 0.3);
-  return adjustedSpeed;
+  return baseSpeed * (1 - (radius - CANVAS_RECORD_RADIUS_MIN) / (CANVAS_RECORD_RADIUS_MAX - CANVAS_RECORD_RADIUS_MIN) * 0.3);
 }
 
 function scheduleNextProduction(producer) {
@@ -880,7 +878,7 @@ function scheduleNextProduction(producer) {
   const framesPerRecord = 60 / producerRate;
 
   // Apply random delay in seconds
-  let randomTimeFrames = 0;
+  let randomTimeFrames;
   const randomDelaySec = random(0, producerDelayRandomFactor);
   randomTimeFrames = randomDelaySec * 60;
 
@@ -1089,7 +1087,7 @@ function startProcessingRecord(consumer, record, partitionId, currentTime) {
 
   // Recalculate processing times for all other active records
   for (const pid of Object.keys(consumer.activePartitions)) {
-    if (pid != partitionId && consumer.activePartitions[pid]) {
+    if (pid !== partitionId && consumer.activePartitions[pid]) {
       recalculateProcessingTime(consumer, pid, currentTime);
     }
   }
@@ -1471,9 +1469,7 @@ function drawConsumerPartitionConnections(consumer) {
 }
 
 function drawTransitRecords(consumer) {
-  const currentTime = millis();
-
-  // Skip if transitRecords isn't initialized
+// Skip if transitRecords isn't initialized
   if (!consumer.transitRecords) return;
 
   for (const record of consumer.transitRecords) {
