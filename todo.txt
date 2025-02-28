@@ -1,0 +1,45 @@
+1. Modify the producer time to use real time with millis:
+        Reliable Timing Strategies
+        1. Millisecond Timing (millis())
+
+        javascript
+        let lastEvent = 0;
+
+        function draw() {
+          if (millis() - lastEvent > 1000) { // Trigger every 1000ms
+            doSomething();
+            lastEvent = millis();
+          }
+        }
+        Uses actual system clock time rather than frames15
+
+        2. Delta Time Compensation
+
+        javascript
+        let posX = 0;
+        let prevTime = 0;
+
+        function draw() {
+          const deltaTime = millis() - prevTime;
+          posX += (100 * deltaTime)/1000; // 100px/second
+          prevTime = millis();
+        }
+        Makes movement speed consistent regardless of FPS5
+
+ 2. Records shouldn't move faster if they're small. Replace this speed with "network" speed
+   // Smaller records move slightly faster for visual variety
+   const adjustedSpeed = baseSpeed * (1 - (radius - MIN_RECORD_RADIUS) / (MAX_RECORD_RADIUS - MIN_RECORD_RADIUS) * 0.3);
+
+
+ 3. Decouple record x line 833 from the object itself, it's an animation concern
+
+ 4. could we emit an event on record pushed to partition? line 847
+   // Add the record to the partition
+   partitions[partitionId].records.push(record);
+
+   // Emit record produced event
+   eventEmitter.emit(EVENTS.RECORD_PRODUCED, record);
+
+ 5. Make the emit record look more like a kafka producer
+
+6. consumerThroughputMaxInBytes and processingCApacitySlider should be the same
