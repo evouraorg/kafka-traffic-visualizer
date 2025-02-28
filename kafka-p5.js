@@ -18,16 +18,21 @@ const PRODUCER_EFFECT_DURATION = 400;
 
 // ------ STATE VARIABLES ------
 // Core simulation state
+let globalRecordCounter = 0;
+
 let partitionCount = 8;
+
 let producerCount = 2;
+let producerRate = 1;
+let producerDelayRandomness = 0.2;
+
 let consumerCount = 2;
-let produceRate = 1;
-let minValueSize = 10;
-let maxValueSize = 1000;
-let keyRange = 100;
-let produceRandomness = 0.2;
-let processingSpeed = 3.0;
-let recordCounter = 0;
+let consumerProcessingSpeed = 1.0;
+let consumerAssignmentStrategy = 'round-robin';
+
+let recordValueSizeMin = 10;
+let recordValueSizeMax = 1000;
+let recordKeyRange = 100;
 
 // Dynamic canvas height based on content
 let canvasHeightDynamic = CANVAS_HEIGHT;
@@ -51,6 +56,7 @@ let keyRangeSlider, produceRandomnessSlider, processingSpeedSlider;
 let partitionInput, producerInput, consumerInput;
 let produceRateInput, minValueSizeInput, maxValueSizeInput;
 let keyRangeInput, produceRandomnessInput, processingSpeedInput;
+let assignmentStrategySelect;
 
 // ------ SETUP & INITIALIZATION ------
 function setup() {
@@ -72,6 +78,7 @@ function setupControlReferences() {
   partitionSlider = select('#partitionSlider');
   producerSlider = select('#producerSlider');
   consumerSlider = select('#consumerSlider');
+  consumerAssignmentStrategy = select('#assignmentStrategySelect');
   produceRateSlider = select('#produceRateSlider');
   keyRangeSlider = select('#keyRangeSlider');
   produceRandomnessSlider = select('#produceRandomnessSlider');
@@ -113,6 +120,8 @@ function attachControlEventListeners() {
   processingSpeedInput.input(() => handleTextInput(processingSpeedInput, processingSpeedSlider, 'speed'));
   minValueSizeInput.input(() => handleTextInput(minValueSizeInput, minValueSizeSlider, 'minSize'));
   maxValueSizeInput.input(() => handleTextInput(maxValueSizeInput, maxValueSizeSlider, 'maxSize'));
+
+  consumerAssignmentStrategy.changed(handleAssignmentStrategyChange);
 }
 
 function handleSliderInput(slider, textInput, type) {
@@ -162,7 +171,7 @@ function handleTextInput(textInput, slider, type) {
 
 function initializeState() {
   // Reset counters and state
-  recordCounter = 0;
+  globalRecordCounter = 0;
   producerEffects = [];
   
   // Initialize data structures
@@ -216,15 +225,10 @@ function initializeConsumers() {
   consumers = [];
   
   // Create a temporary array to help with partition assignment
-  let partitionAssignments = [];
-  for (let i = 0; i < partitionCount; i++) {
-    partitionAssignments.push(i % Math.max(1, consumerCount));
-  }
+  consumers = [];
   
-  // Shuffle partition assignments for more realistic distribution
-  if (consumerCount > 1) {
-    shuffleArray(partitionAssignments);
-  }
+  // Get partition assignments using the rebalance algorithm
+  let partitionAssignments = rebalanceConsumerGroup(partitionCount, consumerCount, consumerAssignmentStrategy);
   
   for (let i = 0; i < consumerCount; i++) {
     // Find partitions assigned to this consumer
@@ -283,6 +287,14 @@ function handleScrolling() {
   }
 }
 
+function handleAssignmentStrategyChange() {
+  consumerAssignmentStrategy = assignmentStrategySelect.value();
+  // Only update consumers if there are any
+  if (consumerCount > 0) {
+    updateConsumers();
+  }
+}
+
 function handleControlChanges() {
   // Get values from sliders
   if (parseInt(partitionSlider.value()) !== partitionCount) {
@@ -301,10 +313,10 @@ function handleControlChanges() {
   }
   
   // Update simple settings
-  produceRate = parseInt(produceRateSlider.value());
-  keyRange = parseInt(keyRangeSlider.value());
-  produceRandomness = parseFloat(produceRandomnessSlider.value());
-  processingSpeed = parseFloat(processingSpeedSlider.value());
+  producerRate = parseInt(produceRateSlider.value());
+  recordKeyRange = parseInt(keyRangeSlider.value());
+  producerDelayRandomness = parseFloat(produceRandomnessSlider.value());
+  consumerProcessingSpeed = parseFloat(processingSpeedSlider.value());
   
   // Handle value size validation
   let newMinValueSize = parseInt(minValueSizeSlider.value());
@@ -312,7 +324,7 @@ function handleControlChanges() {
   
   // Ensure max value is always >= min value
   if (newMaxValueSize < newMinValueSize) {
-    if (minValueSize !== newMinValueSize) {
+    if (recordValueSizeMin !== newMinValueSize) {
       // Min changed, update max to match
       maxValueSizeSlider.value(newMinValueSize);
       maxValueSizeInput.value(newMinValueSize);
@@ -325,8 +337,8 @@ function handleControlChanges() {
     }
   }
   
-  minValueSize = newMinValueSize;
-  maxValueSize = newMaxValueSize;
+  recordValueSizeMin = newMinValueSize;
+  recordValueSizeMax = newMaxValueSize;
 }
 
 // ------ STATE UPDATES ------
@@ -435,15 +447,15 @@ function updateProducerEffects() {
 
 function createRecord(producer) {
   // Generate record characteristics
-  const recordSize = random(minValueSize, maxValueSize);
+  const recordSize = random(recordValueSizeMin, recordValueSizeMax);
   const recordRadius = calculateRecordRadius(recordSize);
-  const recordKey = int(random(1, keyRange + 1));
+  const recordKey = int(random(1, recordKeyRange + 1));
   const partitionId = recordKey % partitionCount;
   const recordSpeed = calculateRecordSpeed(recordSize);
   
   // Create the record object
   const record = {
-    id: recordCounter++,
+    id: globalRecordCounter++,
     key: recordKey,
     value: recordSize,
     radius: recordRadius,
@@ -472,15 +484,15 @@ function createRecord(producer) {
 
 function calculateRecordRadius(size) {
   // Handle edge case when min and max are too close
-  if (minValueSize >= maxValueSize || Math.abs(maxValueSize - minValueSize) < 2) {
+  if (recordValueSizeMin >= recordValueSizeMax || Math.abs(recordValueSizeMax - recordValueSizeMin) < 2) {
     return (MIN_RECORD_RADIUS + MAX_RECORD_RADIUS) / 2; // Return average radius
   }
   
   // Map size to radius logarithmically
   return map(
     log(size), 
-    log(minValueSize), 
-    log(maxValueSize), 
+    log(recordValueSizeMin), 
+    log(recordValueSizeMax), 
     MIN_RECORD_RADIUS, 
     MAX_RECORD_RADIUS
   );
@@ -497,21 +509,21 @@ function calculateRecordSpeed(size) {
   // For larger records, time should increase proportionally
   // Speed = Distance / Time, where Time = Size / 1000 * 60 frames
   const frames = (size / 1000) * 60;
-  const speed = travelDistance / frames * processingSpeed;
+  const speed = travelDistance / frames * consumerProcessingSpeed;
   
   return speed;
 }
 
 function scheduleNextProduction(producer) {
   // Base time between records in frames (60 frames per second)
-  const framesPerRecord = 60 / produceRate;
+  const framesPerRecord = 60 / producerRate;
   
   // Apply randomness in seconds, capped at 1 second maximum
   let randomTimeFrames = 0;
   
   // Apply randomness individually for each producer
   // Use the produceRandomness value which is now constrained to 0-1 seconds
-  const randomDelaySec = random(0, produceRandomness);
+  const randomDelaySec = random(0, producerDelayRandomness);
   randomTimeFrames = randomDelaySec * 60;
   
   // Set next production time
@@ -635,7 +647,7 @@ function updateTransitRecords() {
       const record = consumer.transitRecords[i];
       
       // Update progress
-      record.progress += 0.05 * processingSpeed;
+      record.progress += 0.05 * consumerProcessingSpeed;
       
       // Calculate new position along the path
       record.x = lerp(record.startX, record.endX, record.progress);
@@ -686,7 +698,7 @@ function updateProducerMetrics(producer, elapsedSeconds) {
     // gradually decay the displayed rate toward the target rate
     if (producer.producedSinceLastUpdate === 0 && producer.recordsProduced > 0) {
       // Gradually adjust shown rate to match target rate
-      const targetRate = produceRate; // Records per second
+      const targetRate = producerRate; // Records per second
       producer.recordsRate = lerp(producer.recordsRate, targetRate, 0.3);
     }
   }
@@ -926,12 +938,96 @@ function colorFromHSB(h, s, b) {
   return col;
 }
 
-function shuffleArray(array) {
-  for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
+function rebalanceConsumerGroup(partitions, consumerCount, strategy = assignmentStrategy) {
+  // Array to store partition assignments (which consumer owns which partition)
+  let assignments = new Array(partitions).fill(-1);
+  
+  if (consumerCount <= 0) return assignments;
+  
+  switch (strategy) {
+    case 'range':
+      // Range strategy: divide partitions into ranges and assign each range to a consumer
+      // This is similar to Kafka's default RangeAssignor
+      const partitionsPerConsumer = Math.floor(partitions / consumerCount);
+      const remainder = partitions % consumerCount;
+      
+      let startIndex = 0;
+      for (let i = 0; i < consumerCount; i++) {
+        // Calculate how many partitions this consumer gets
+        const numPartitions = partitionsPerConsumer + (i < remainder ? 1 : 0);
+        
+        // Assign this range of partitions to the consumer
+        for (let j = 0; j < numPartitions; j++) {
+          if (startIndex + j < partitions) {
+            assignments[startIndex + j] = i;
+          }
+        }
+        
+        startIndex += numPartitions;
+      }
+      break;
+      
+    case 'sticky':
+      // Sticky strategy: attempt to maintain previous assignments when possible
+      // In this simplified version, we distribute partitions evenly
+      // but try to maintain a locality pattern (adjacent partitions)
+      const partitionsPerConsumerSticky = Math.ceil(partitions / consumerCount);
+      
+      for (let i = 0; i < partitions; i++) {
+        const consumerId = Math.floor(i / partitionsPerConsumerSticky);
+        assignments[i] = consumerId < consumerCount ? consumerId : consumerCount - 1;
+      }
+      break;
+      
+    case 'cooperative-sticky':
+      // Cooperative sticky strategy: similar to sticky but models the cooperative rebalancing
+      // In a real implementation, this would be more complex with phased reassignments
+      // For simulation, we'll create a balanced but slightly clustered distribution
+      
+      // First, do round-robin assignment
+      for (let i = 0; i < partitions; i++) {
+        assignments[i] = i % consumerCount;
+      }
+      
+      // Then, adjust to create some locality clustering
+      // This simulates the "stickiness" aspect
+      if (partitions >= consumerCount * 2) {
+        for (let c = 0; c < consumerCount; c++) {
+          // Try to give each consumer a small cluster of partitions
+          const clusterSize = Math.floor(partitions / consumerCount / 2);
+          const startPos = c * clusterSize;
+          
+          for (let i = 0; i < clusterSize && startPos + i < partitions; i++) {
+            // Only reassign if it doesn't create too much imbalance
+            const currentOwner = assignments[startPos + i];
+            if (currentOwner !== c) {
+              // Count partitions owned by each consumer
+              let consumerPartitionCounts = new Array(consumerCount).fill(0);
+              for (let j = 0; j < partitions; j++) {
+                consumerPartitionCounts[assignments[j]]++;
+              }
+              
+              // Only reassign if it doesn't create too much imbalance
+              if (consumerPartitionCounts[currentOwner] > consumerPartitionCounts[c]) {
+                assignments[startPos + i] = c;
+              }
+            }
+          }
+        }
+      }
+      break;
+      
+    case 'round-robin':
+    default:
+      // Round-robin strategy: distribute partitions evenly across consumers
+      // Similar to Kafka's RoundRobinAssignor
+      for (let i = 0; i < partitions; i++) {
+        assignments[i] = i % consumerCount;
+      }
+      break;
   }
-  return array;
+  
+  return assignments;
 }
 
 function draw() {

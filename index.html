@@ -122,6 +122,18 @@
               <input type="text" id="consumerInput" value="2">
             </div>
           </div>
+
+          <div class="control-group">
+            <div class="control-label">Consumer Assignment:</div>
+            <div class="control-input">
+              <select id="assignmentStrategySelect">
+                <option value="round-robin">Round Robin</option>
+                <option value="range">Range</option>
+                <option value="sticky">Sticky</option>
+                <option value="cooperative-sticky">Cooperative Sticky</option>
+              </select>
+            </div>
+          </div>
           
           <div class="control-group">
             <div class="control-label">Produce Rate:</div>
@@ -141,7 +153,6 @@
         </div>
         
         <div class="control-column">
-          <!-- Advanced configuration controls - RIGHT COLUMN -->
           <div class="control-group">
             <div class="control-label">Produce Randomness:</div>
             <div class="control-input">
@@ -153,8 +164,8 @@
           <div class="control-group">
             <div class="control-label">Processing Speed:</div>
             <div class="control-input">
-              <input type="range" id="processingSpeedSlider" min="0.5" max="10" value="3.0" step="0.5">
-              <input type="text" id="processingSpeedInput" value="3.0">
+              <input type="range" id="processingSpeedSlider" min="0.5" max="10" value="1.0" step="0.5">
+              <input type="text" id="processingSpeedInput" value="1.0">
             </div>
           </div>
           
