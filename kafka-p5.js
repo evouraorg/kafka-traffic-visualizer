@@ -10,7 +10,6 @@ const PRODUCER_X = 120;
 const CONSUMER_X = PARTITION_START_X + PARTITION_WIDTH + 50;
 const MAX_RECORD_RADIUS = 15;
 const MIN_RECORD_RADIUS = 5;
-const RECORD_SPEED = 1.5;
 const CONSUMER_RATE = 3;
 const PRODUCER_EFFECT_DURATION = 400;
 
@@ -228,10 +227,11 @@ function initializeProducers() {
 }
 
 function initializeConsumers() {
+  // Create an empty array for consumers
   consumers = [];
 
-  // Create a temporary array to help with partition assignment
-  consumers = [];
+  // If no consumers requested, just return
+  if (consumerCount <= 0) return;
 
   // Get partition assignments using the rebalance algorithm
   let partitionAssignments = rebalanceConsumerGroup(partitionCount, consumerCount, consumerAssignmentStrategy);
@@ -247,13 +247,18 @@ function initializeConsumers() {
 
     // Calculate average y position based on assigned partitions
     let avgY = 0;
-    for (const partitionId of assignedPartitions) {
-      avgY += partitions[partitionId].y + PARTITION_HEIGHT / 2;
+    if (assignedPartitions.length > 0) {
+      for (const partitionId of assignedPartitions) {
+        avgY += partitions[partitionId].y + PARTITION_HEIGHT / 2;
+      }
+      avgY = avgY / assignedPartitions.length;
+    } else {
+      // Default position for unassigned consumers
+      avgY = PARTITION_START_Y + partitionCount * (PARTITION_HEIGHT + PARTITION_SPACING) + 50 + i * 70;
     }
-    avgY = avgY / Math.max(1, assignedPartitions.length);
 
     // Generate a stable color based on index (distinct from producers)
-    const hue = map(i, 0, consumerCount, 180, 360);
+    const hue = map(i, 0, Math.max(1, consumerCount - 1), 180, 360);
     const color = colorFromHSB(hue, 70, 80);
 
     consumers.push({
@@ -272,10 +277,16 @@ function initializeConsumers() {
     });
   }
 
-  adjustConsumerPositions();
+  // Only adjust positions if we have consumers
+  if (consumerCount > 0) {
+    adjustConsumerPositions();
+  }
 }
 
 function adjustConsumerPositions() {
+  // If no consumers, just return
+  if (consumers.length === 0) return;
+
   // Keep track of original/ideal positions for each consumer
   const originalPositions = consumers.map(c => c.y);
 
@@ -348,7 +359,7 @@ function adjustConsumerPositions() {
           }
         } else if (i === 0) {
           // First consumer, can only be constrained from below
-          const maxY = consumers[i+1].y - MIN_CONSUMER_SPACING;
+          const maxY = consumers.length > 1 ? consumers[i+1].y - MIN_CONSUMER_SPACING : Infinity;
           if (originalY <= maxY && consumer.y !== originalY) {
             consumer.y = originalY;
             improved = true;
@@ -372,7 +383,7 @@ function adjustConsumerPositions() {
 function updateCanvasHeight() {
   const minHeight = 700; // Minimum canvas height
 
-  // Find the lowest element (partition or consumer)
+  // Find the lowest element (partition, consumer, or producer)
   let lowestY = PARTITION_START_Y + partitionCount * (PARTITION_HEIGHT + PARTITION_SPACING);
 
   // Check if any consumers are lower
@@ -381,6 +392,15 @@ function updateCanvasHeight() {
     const consumerBottom = consumer.y + 50;
     if (consumerBottom > lowestY) {
       lowestY = consumerBottom;
+    }
+  }
+
+  // Check if any producers are lower
+  for (const producer of producers) {
+    // Add some margin below the producer
+    const producerBottom = producer.y + 50;
+    if (producerBottom > lowestY) {
+      lowestY = producerBottom;
     }
   }
 
@@ -510,6 +530,9 @@ function updateConsumers() {
       return consumers[i].assignedPartitions.includes(record.partitionId);
     });
   }
+
+  // Update canvas height in case consumers extend beyond current canvas
+  updateCanvasHeight();
 }
 
 function updateSimulation() {
