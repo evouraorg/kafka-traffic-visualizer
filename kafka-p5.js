@@ -7,9 +7,7 @@ const PARTITION_SPACING = 20;
 const PARTITION_START_X = 200;
 const PARTITION_START_Y = 120;
 const PRODUCER_X = 120;
-const PRODUCER_SPACING = 80;
 const CONSUMER_X = PARTITION_START_X + PARTITION_WIDTH + 50;
-const CONSUMER_SPACING = 80;
 const MAX_RECORD_RADIUS = 15;
 const MIN_RECORD_RADIUS = 5;
 const RECORD_SPEED = 1.5;
@@ -36,7 +34,6 @@ let recordKeyRange = 100;
 
 // Dynamic canvas height based on content
 let canvasHeightDynamic = CANVAS_HEIGHT;
-let scrollY = 0; // For scrolling when many partitions
 
 // Data structures
 let partitions = [];
@@ -275,16 +272,6 @@ function updateCanvasHeight() {
   
   canvasHeightDynamic = max(minHeight, requiredHeight);
   resizeCanvas(CANVAS_WIDTH, canvasHeightDynamic);
-}
-
-function handleScrolling() {
-  if (mouseIsPressed && mouseY < canvasHeightDynamic - 180) {
-    scrollY += (pmouseY - mouseY) * 0.5;
-    // Limit scrolling
-    const minScroll = 0;
-    const maxScroll = max(0, PARTITION_START_Y + partitionCount * (PARTITION_HEIGHT + PARTITION_SPACING) - (canvasHeightDynamic - 200));
-    scrollY = constrain(scrollY, minScroll, maxScroll);
-  }
 }
 
 function handleAssignmentStrategyChange() {
@@ -731,7 +718,6 @@ function updateConsumerMetrics(consumer, elapsedSeconds) {
 // ------ RENDERING ------
 function renderSimulation() {
   push();
-  translate(0, -scrollY);
   
   // Draw simulation components
   drawPartitions();
@@ -1034,7 +1020,6 @@ function draw() {
   background(240);
   
   // Handle events
-  handleScrolling();
   handleControlChanges();
   
   // Update simulation
