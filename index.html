@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kafka Topic Simulation</title>
+  
+  <!-- Load latest P5.js library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background-color: #f5f5f5;
+    }
+    
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    
+    h1 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 10px;
+    }
+    
+    .description {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #666;
+    }
+    
+    .control-panel {
+      background-color: #e8e8e8;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    .control-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 15px;
+    }
+    
+    .control-column {
+      width: 48%;
+    }
+    
+    .control-group {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    
+    .control-label {
+      width: 180px;
+      text-align: right;
+      padding-right: 15px;
+      font-weight: bold;
+    }
+    
+    .control-input {
+      flex-grow: 1;
+      display: flex;
+      align-items: center;
+    }
+    
+    .control-input input[type="range"] {
+      width: 180px;
+      margin-right: 10px;
+    }
+    
+    .control-input input[type="text"] {
+      width: 50px;
+      text-align: center;
+      padding: 3px;
+    }
+    
+    canvas {
+      display: block;
+      margin: 0 auto;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Kafka Topic Simulation</h1>
+    <p class="description">
+      Visualize data flowing through Kafka topics with producers and consumers
+    </p>
+    
+    <div class="control-panel">
+      <div class="control-row">
+        <div class="control-column">
+          <!-- Basic configuration controls - LEFT COLUMN -->
+          <div class="control-group">
+            <div class="control-label">Partition Count:</div>
+            <div class="control-input">
+              <input type="range" id="partitionSlider" min="1" max="32" value="8">
+              <input type="text" id="partitionInput" value="8">
+            </div>
+          </div>
+          
+          <div class="control-group">
+            <div class="control-label">Producer Count:</div>
+            <div class="control-input">
+              <input type="range" id="producerSlider" min="0" max="16" value="2">
+              <input type="text" id="producerInput" value="2">
+            </div>
+          </div>
+          
+          <div class="control-group">
+            <div class="control-label">Consumer Count:</div>
+            <div class="control-input">
+              <input type="range" id="consumerSlider" min="0" max="16" value="2">
+              <input type="text" id="consumerInput" value="2">
+            </div>
+          </div>
+          
+          <div class="control-group">
+            <div class="control-label">Produce Rate:</div>
+            <div class="control-input">
+              <input type="range" id="produceRateSlider" min="1" max="100" value="1" step="1">
+              <input type="text" id="produceRateInput" value="1">
+            </div>
+          </div>
+          
+          <div class="control-group">
+            <div class="control-label">Key Range:</div>
+            <div class="control-input">
+              <input type="range" id="keyRangeSlider" min="1" max="2048" value="100">
+              <input type="text" id="keyRangeInput" value="100">
+            </div>
+          </div>
+        </div>
+        
+        <div class="control-column">
+          <!-- Advanced configuration controls - RIGHT COLUMN -->
+          <div class="control-group">
+            <div class="control-label">Produce Randomness:</div>
+            <div class="control-input">
+              <input type="range" id="produceRandomnessSlider" min="0" max="1" value="0.2" step="0.01">
+              <input type="text" id="produceRandomnessInput" value="0.2">
+            </div>
+          </div>
+          
+          <div class="control-group">
+            <div class="control-label">Processing Speed:</div>
+            <div class="control-input">
+              <input type="range" id="processingSpeedSlider" min="0.5" max="10" value="3.0" step="0.5">
+              <input type="text" id="processingSpeedInput" value="3.0">
+            </div>
+          </div>
+          
+          <div class="control-group">
+            <div class="control-label">Min Value Size:</div>
+            <div class="control-input">
+              <input type="range" id="minValueSizeSlider" min="1" max="10000" value="10">
+              <input type="text" id="minValueSizeInput" value="10">
+            </div>
+          </div>
+          
+          <div class="control-group">
+            <div class="control-label">Max Value Size:</div>
+            <div class="control-input">
+              <input type="range" id="maxValueSizeSlider" min="1" max="10000" value="1000">
+              <input type="text" id="maxValueSizeInput" value="1000">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- The canvas will be inserted here by P5.js -->
+    <div id="canvas-container"></div>
+  </div>
+  
+  <!-- Load your Kafka simulation script -->
+  <script src="kafka-p5.js"></script>
+</body>
+</html>
