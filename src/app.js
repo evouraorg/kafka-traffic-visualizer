@@ -76,7 +76,7 @@ const sketch = (p) => {
     RECORD_REACHED_PARTITION_END: 'record_reached_partition_end',
     RECORD_PROCESSING_STARTED: 'record_processing_started',
     RECORD_PROCESSING_COMPLETED: 'record_processing_completed',
-    CONSUMER_THROUGHPUT_UPDATED: 'capacity_changed',
+    CONSUMER_THROUGHPUT_UPDATED: 'throughput_changed',
     METRICS_UPDATE: 'metrics_update'
   };
 
@@ -205,7 +205,7 @@ const sketch = (p) => {
     });
 
     eventEmitter.on(EVENTS.CONSUMER_THROUGHPUT_UPDATED, (data) => {
-      // When capacity changes, recalculate processing times for all active records
+      // When throughput changes, recalculate processing times for all active records
       for (const consumer of consumers) {
         if (!consumer.activePartitions) continue;
         recalculateProcessingTimes(consumer, p.millis());
@@ -253,7 +253,7 @@ const sketch = (p) => {
     maxValueSizeSlider.input(() => handleSliderInput(maxValueSizeSlider, maxValueSizeInput, 'maxSize'));
     processingCapacitySlider.input(() => {
       handleSliderInput(processingCapacitySlider, processingCapacityInput, 'capacity');
-      // Emit event for capacity change
+      // Emit event for throughput change
       eventEmitter.emit(EVENTS.CONSUMER_THROUGHPUT_UPDATED, {
         value: parseInt(processingCapacitySlider.value())
       });
@@ -271,7 +271,7 @@ const sketch = (p) => {
     maxValueSizeInput.input(() => handleTextInput(maxValueSizeInput, maxValueSizeSlider, 'maxSize'));
     processingCapacityInput.input(() => {
       handleTextInput(processingCapacityInput, processingCapacitySlider, 'capacity');
-      // Emit event for capacity change
+      // Emit event for throughput change
       eventEmitter.emit(EVENTS.CONSUMER_THROUGHPUT_UPDATED, {
         value: parseInt(processingCapacitySlider.value())
       });
@@ -448,7 +448,7 @@ const sketch = (p) => {
         // Structure for concurrent processing
         activePartitions: {}, // Map of partitionId -> record being processed
         processingTimes: {}, // Map of recordId -> {startTime, endTime}
-        capacity: consumerThroughputMaxInBytes, // Bytes per second this consumer can process
+        throughputMax: consumerThroughputMaxInBytes, // Bytes per second this consumer can process
         processingQueues: {}, // Map of partitionId -> queue of records waiting
         transitRecords: []
       });
@@ -655,9 +655,9 @@ const sketch = (p) => {
     consumerRecordTransitSpeedAccelerator = parseFloat(processingSpeedSlider.value());
 
     if (processingCapacitySlider) {
-      const newCapacity = parseInt(processingCapacitySlider.value());
-      if (newCapacity !== consumerThroughputMaxInBytes) {
-        consumerThroughputMaxInBytes = newCapacity;
+      const newThroughput = parseInt(processingCapacitySlider.value());
+      if (newThroughput !== consumerThroughputMaxInBytes) {
+        consumerThroughputMaxInBytes = newThroughput;
         eventEmitter.emit(EVENTS.CONSUMER_THROUGHPUT_UPDATED, { value: consumerThroughputMaxInBytes });
       }
     }
@@ -974,17 +974,17 @@ const sketch = (p) => {
     const currentTime = p.millis();
 
     for (const consumer of consumers) {
-      // Update consumer capacity from slider in real-time
+      // Update consumer throughput from slider in real-time
       if (processingCapacitySlider) {
-        const newCapacity = parseInt(processingCapacitySlider.value());
-        if (consumer.capacity !== newCapacity) {
-          consumer.capacity = newCapacity;
+        const newThroughput = parseInt(processingCapacitySlider.value());
+        if (consumer.throughputMax !== newThroughput) {
+          consumer.throughputMax = newThroughput;
         }
       }
 
       // Ensure we have the necessary data structures
       if (!consumer.activePartitions) consumer.activePartitions = {};
-      if (!consumer.processingState) consumer.processingState = {}; // New tracking object
+      if (!consumer.recordProcessingState) consumer.recordProcessingState = {}; // New tracking object
       if (!consumer.processingQueues) consumer.processingQueues = {};
       if (!consumer.lastUpdateTime) consumer.lastUpdateTime = currentTime;
 
@@ -1011,8 +1011,8 @@ const sketch = (p) => {
       const activeRecordCount = activeRecords.length;
 
       if (activeRecordCount > 0) {
-        // Distribute capacity evenly across active records
-        const throughputPerRecord = consumer.capacity / activeRecordCount;
+        // Distribute throughput evenly across active records
+        const throughputPerRecord = consumer.throughputMax / activeRecordCount;
 
         // Calculate bytes processed during this time slice for each active record
         const bytesProcessedPerRecord = (throughputPerRecord * elapsedTimeMs) / 1000;
@@ -1023,8 +1023,8 @@ const sketch = (p) => {
           const partitionId = activeRecord.partitionId;
 
           // Initialize processing state if needed
-          if (!consumer.processingState[record.id]) {
-            consumer.processingState[record.id] = {
+          if (!consumer.recordProcessingState[record.id]) {
+            consumer.recordProcessingState[record.id] = {
               startTime: currentTime,
               bytesProcessed: 0,
               bytesTotal: record.value,
@@ -1033,7 +1033,7 @@ const sketch = (p) => {
             };
           }
 
-          const state = consumer.processingState[record.id];
+          const state = consumer.recordProcessingState[record.id];
 
           // Update bytes processed
           state.bytesProcessed += bytesProcessedPerRecord;
@@ -1049,11 +1049,12 @@ const sketch = (p) => {
             const finishedRecord = {...record};
             delete consumer.activePartitions[partitionId];
 
-            // Calculate actual processing time
+            // Calculate actual processing time and any lost bytes
             const actualTime = currentTime - state.startTime;
+            const lostBytes = Math.max(0, state.bytesProcessed - state.bytesTotal);
 
             // Clean up state
-            delete consumer.processingState[record.id];
+            delete consumer.recordProcessingState[record.id];
 
             // Mark record as processed
             finishedRecord.isBeingProcessed = false;
@@ -1063,11 +1064,12 @@ const sketch = (p) => {
             eventEmitter.emit(EVENTS.RECORD_PROCESSING_COMPLETED, {
               ...finishedRecord,
               consumerId: consumer.id,
-              processingTimeMs: actualTime
+              processingTimeMs: actualTime,
+              lostBytes: lostBytes
             });
 
-            // Log completion
-            console.log(`Record processing completed: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "consumer": ${consumer.id}, "actualTimeMs": ${Math.round(actualTime)}}`);
+            // Log completion with lost bytes
+            console.log(`Record processing completed: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "consumer": ${consumer.id}, "actualTimeMs": ${Math.round(actualTime)}, "lostBytes": ${Math.round(lostBytes)}}`);
 
             // If there are more records in the queue for this partition, process the next one
             if (consumer.processingQueues[partitionId] && consumer.processingQueues[partitionId].length > 0) {
@@ -1111,14 +1113,14 @@ const sketch = (p) => {
   function startProcessingRecord(consumer, record, partitionId, currentTime) {
     // Ensure necessary data structures exist
     if (!consumer.activePartitions) consumer.activePartitions = {};
-    if (!consumer.processingState) consumer.processingState = {};
+    if (!consumer.recordProcessingState) consumer.recordProcessingState = {};
     if (!consumer.lastUpdateTime) consumer.lastUpdateTime = currentTime;
 
     // Add record to active partitions
     consumer.activePartitions[partitionId] = record;
 
     // Initialize processing state with byte tracking
-    consumer.processingState[record.id] = {
+    consumer.recordProcessingState[record.id] = {
       startTime: currentTime,
       bytesProcessed: 0,
       bytesTotal: record.value,
@@ -1126,12 +1128,9 @@ const sketch = (p) => {
       lastProgressUpdate: currentTime
     };
 
-    // Count active records
-    const activeRecordCount = Object.keys(consumer.activePartitions).filter(pid =>
-        consumer.activePartitions[pid] !== undefined).length;
-
     // Calculate estimated processing time for UI/metrics
-    const throughputPerRecord = consumer.capacity / activeRecordCount;
+    const activeRecordCount = Object.keys(consumer.activePartitions).length;
+    const throughputPerRecord = consumer.throughputMax / activeRecordCount;
     const estimatedProcessingTimeMs = (record.value / throughputPerRecord) * 1000;
 
     // Update record state
@@ -1174,14 +1173,14 @@ const sketch = (p) => {
     if (activeRecordCount === 0) return;
 
     // Throughput per record given equal distribution
-    const throughputPerRecord = consumer.capacity / activeRecordCount;
+    const throughputPerRecord = consumer.throughputMax / activeRecordCount;
 
     // Update each active record's expected completion time
     for (const activeRecord of activeRecords) {
       const record = activeRecord.record;
       const partitionId = activeRecord.partitionId;
 
-      const state = consumer.processingState[record.id];
+      const state = consumer.recordProcessingState[record.id];
       if (!state) continue;
 
       // Calculate remaining bytes
@@ -1628,7 +1627,7 @@ const sketch = (p) => {
         panelX + 5, panelY + 40);
     p.text(`Avg Processing: ${Math.round(metrics.global.avgProcessingTimeMs)}ms`,
         panelX + 5, panelY + 55);
-    p.text(`Consumer Capacity: ${formatBytes(consumerThroughputMaxInBytes)}/s`,
+    p.text(`Consumer Throughput: ${formatBytes(consumerThroughputMaxInBytes)}/s`,
         panelX + 5, panelY + 70);
   }
 
