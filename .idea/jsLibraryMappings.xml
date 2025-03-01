@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="JavaScriptLibraryMappings">
-    <file url="file://$PROJECT_DIR$" libraries="{p5.js}" />
+    <file url="PROJECT" libraries="{@types/p5}" />
   </component>
 </project>
