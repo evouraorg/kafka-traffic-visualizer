@@ -208,10 +208,7 @@ const sketch = (p) => {
       // When capacity changes, recalculate processing times for all active records
       for (const consumer of consumers) {
         if (!consumer.activePartitions) continue;
-
-        for (const partitionId in consumer.activePartitions) {
-          recalculateProcessingTime(consumer, partitionId, p.millis());
-        }
+        recalculateProcessingTimes(consumer, p.millis());
       }
     });
   }
@@ -987,51 +984,101 @@ const sketch = (p) => {
 
       // Ensure we have the necessary data structures
       if (!consumer.activePartitions) consumer.activePartitions = {};
-      if (!consumer.processingTimes) consumer.processingTimes = {};
+      if (!consumer.processingState) consumer.processingState = {}; // New tracking object
       if (!consumer.processingQueues) consumer.processingQueues = {};
+      if (!consumer.lastUpdateTime) consumer.lastUpdateTime = currentTime;
 
-      // Check all active partitions for completed records
-      const activePartitionIds = Object.keys(consumer.activePartitions);
+      // Calculate time elapsed since last update
+      const elapsedTimeMs = currentTime - consumer.lastUpdateTime;
+      consumer.lastUpdateTime = currentTime;
 
-      for (const partitionId of activePartitionIds) {
-        // Skip if the active partition entry is invalid
+      // Skip processing if no time has passed (prevents division by zero)
+      if (elapsedTimeMs <= 0) continue;
+
+      // Count active records (not just partitions)
+      const activeRecords = [];
+      for (const partitionId in consumer.activePartitions) {
         const record = consumer.activePartitions[partitionId];
-        if (!record) continue;
-
-        // Get processing info for this record
-        const processingInfo = consumer.processingTimes[record.id];
-        if (!processingInfo) continue;
-
-        // Check if the record has completed processing
-        if (currentTime >= processingInfo.endTime) {
-          // Record is finished, remove it from active partitions
-          const finishedRecord = {...consumer.activePartitions[partitionId]};
-          delete consumer.activePartitions[partitionId];
-
-          // Calculate actual processing time
-          const actualTime = currentTime - processingInfo.startTime;
-          delete consumer.processingTimes[record.id];
-
-          // Mark record as processed
-          finishedRecord.isBeingProcessed = false;
-          finishedRecord.isProcessed = true;
-
-          // Emit completion event with processing metrics
-          eventEmitter.emit(EVENTS.RECORD_PROCESSING_COMPLETED, {
-            ...finishedRecord,
-            consumerId: consumer.id,
-            processingTimeMs: actualTime
+        if (record) {
+          activeRecords.push({
+            id: record.id,
+            partitionId: partitionId,
+            record: record
           });
-
-          // If there are more records in the queue for this partition, process the next one
-          if (consumer.processingQueues[partitionId] && consumer.processingQueues[partitionId].length > 0) {
-            const nextRecord = consumer.processingQueues[partitionId].shift();
-            startProcessingRecord(consumer, nextRecord, partitionId, currentTime);
-          }
-        } else {
-          // Record still processing, recalculate end time based on current capacity
-          recalculateProcessingTime(consumer, partitionId, currentTime);
         }
+      }
+
+      const activeRecordCount = activeRecords.length;
+
+      if (activeRecordCount > 0) {
+        // Distribute capacity evenly across active records
+        const throughputPerRecord = consumer.capacity / activeRecordCount;
+
+        // Calculate bytes processed during this time slice for each active record
+        const bytesProcessedPerRecord = (throughputPerRecord * elapsedTimeMs) / 1000;
+
+        // Process each active record
+        for (const activeRecord of activeRecords) {
+          const record = activeRecord.record;
+          const partitionId = activeRecord.partitionId;
+
+          // Initialize processing state if needed
+          if (!consumer.processingState[record.id]) {
+            consumer.processingState[record.id] = {
+              startTime: currentTime,
+              bytesProcessed: 0,
+              bytesTotal: record.value,
+              partitionId: partitionId,
+              lastProgressUpdate: currentTime
+            };
+          }
+
+          const state = consumer.processingState[record.id];
+
+          // Update bytes processed
+          state.bytesProcessed += bytesProcessedPerRecord;
+          state.lastProgressUpdate = currentTime;
+
+          // Update visual progress indicator
+          const progress = Math.min(state.bytesProcessed / state.bytesTotal, 0.99);
+          record.processingProgress = progress;
+
+          // Check if record is complete
+          if (state.bytesProcessed >= state.bytesTotal) {
+            // Record is finished, remove it from active partitions
+            const finishedRecord = {...record};
+            delete consumer.activePartitions[partitionId];
+
+            // Calculate actual processing time
+            const actualTime = currentTime - state.startTime;
+
+            // Clean up state
+            delete consumer.processingState[record.id];
+
+            // Mark record as processed
+            finishedRecord.isBeingProcessed = false;
+            finishedRecord.isProcessed = true;
+
+            // Emit completion event with processing metrics
+            eventEmitter.emit(EVENTS.RECORD_PROCESSING_COMPLETED, {
+              ...finishedRecord,
+              consumerId: consumer.id,
+              processingTimeMs: actualTime
+            });
+
+            // Log completion
+            console.log(`Record processing completed: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "consumer": ${consumer.id}, "actualTimeMs": ${Math.round(actualTime)}}`);
+
+            // If there are more records in the queue for this partition, process the next one
+            if (consumer.processingQueues[partitionId] && consumer.processingQueues[partitionId].length > 0) {
+              const nextRecord = consumer.processingQueues[partitionId].shift();
+              startProcessingRecord(consumer, nextRecord, partitionId, currentTime);
+            }
+          }
+        }
+
+        // After processing current active records, update expected completion times for UI
+        recalculateProcessingTimes(consumer, currentTime);
       }
 
       // Check all assigned partitions for new records that have reached the end
@@ -1060,92 +1107,102 @@ const sketch = (p) => {
     }
   }
 
-  // Fixed function for starting record processing
+  // Completely redesigned function for starting record processing
   function startProcessingRecord(consumer, record, partitionId, currentTime) {
     // Ensure necessary data structures exist
     if (!consumer.activePartitions) consumer.activePartitions = {};
-    if (!consumer.processingTimes) consumer.processingTimes = {};
+    if (!consumer.processingState) consumer.processingState = {};
+    if (!consumer.lastUpdateTime) consumer.lastUpdateTime = currentTime;
 
     // Add record to active partitions
     consumer.activePartitions[partitionId] = record;
 
-    // Get count of active partitions
-    const activeCount = Object.keys(consumer.activePartitions).length;
-
-    // Calculate effective capacity per partition
-    const effectiveCapacity = consumer.capacity / activeCount;
-
-    // Calculate processing time
-    const processingTimeMs = (record.value / effectiveCapacity) * 1000;
-
-    // Record processing start/end times
-    consumer.processingTimes[record.id] = {
+    // Initialize processing state with byte tracking
+    consumer.processingState[record.id] = {
       startTime: currentTime,
-      endTime: currentTime + processingTimeMs,
-      partitionId: partitionId
+      bytesProcessed: 0,
+      bytesTotal: record.value,
+      partitionId: partitionId,
+      lastProgressUpdate: currentTime
     };
+
+    // Count active records
+    const activeRecordCount = Object.keys(consumer.activePartitions).filter(pid =>
+        consumer.activePartitions[pid] !== undefined).length;
+
+    // Calculate estimated processing time for UI/metrics
+    const throughputPerRecord = consumer.capacity / activeRecordCount;
+    const estimatedProcessingTimeMs = (record.value / throughputPerRecord) * 1000;
 
     // Update record state
     record.isBeingProcessed = true;
     record.isWaiting = false;
-    record.processingTimeMs = processingTimeMs; // Expected time
+    record.processingTimeMs = estimatedProcessingTimeMs;
+    record.processingProgress = 0;
 
     // Emit event for processing start
     eventEmitter.emit(EVENTS.RECORD_PROCESSING_STARTED, {
       ...record,
       consumerId: consumer.id,
-      estimatedTimeMs: processingTimeMs
+      estimatedTimeMs: estimatedProcessingTimeMs
     });
 
     // Log processing start
-    console.log(`Record processing started: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "consumer": ${consumer.id}, "estimatedTimeMs": ${Math.round(processingTimeMs)}}`);
+    console.log(`Record processing started: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "consumer": ${consumer.id}, "estimatedTimeMs": ${Math.round(estimatedProcessingTimeMs)}}`);
 
-    // Recalculate processing times for all other active records
-    for (const pid of Object.keys(consumer.activePartitions)) {
-      if (pid !== partitionId && consumer.activePartitions[pid]) {
-        recalculateProcessingTime(consumer, pid, currentTime);
-      }
-    }
+    // After adding a new record, recalculate processing times for all records
+    recalculateProcessingTimes(consumer, currentTime);
   }
 
-  // Fixed function to avoid negative processing times
-  function recalculateProcessingTime(consumer, partitionId, currentTime) {
-    // Safety checks
-    if (!consumer || !consumer.activePartitions) return;
+  // New function to update all processing times based on current capacity allocation
+  function recalculateProcessingTimes(consumer, currentTime) {
+    // Count active records
+    const activeRecords = [];
+    for (const partitionId in consumer.activePartitions) {
+      const record = consumer.activePartitions[partitionId];
+      if (record) {
+        activeRecords.push({
+          id: record.id,
+          partitionId: partitionId,
+          record: record
+        });
+      }
+    }
 
-    const record = consumer.activePartitions[partitionId];
-    if (!record) return;
+    const activeRecordCount = activeRecords.length;
 
-    const recordId = record.id;
-    if (!consumer.processingTimes) consumer.processingTimes = {};
+    if (activeRecordCount === 0) return;
 
-    const processingInfo = consumer.processingTimes[recordId];
-    if (!processingInfo) return;
+    // Throughput per record given equal distribution
+    const throughputPerRecord = consumer.capacity / activeRecordCount;
 
-    // Calculate how many partitions are active for this consumer
-    const activeCount = Object.keys(consumer.activePartitions).length;
-    if (activeCount === 0) return;
+    // Update each active record's expected completion time
+    for (const activeRecord of activeRecords) {
+      const record = activeRecord.record;
+      const partitionId = activeRecord.partitionId;
 
-    // Calculate effective capacity for this partition
-    const effectiveCapacity = consumer.capacity / activeCount;
+      const state = consumer.processingState[record.id];
+      if (!state) continue;
 
-    // Calculate new total processing time based on current capacity
-    const totalProcessingTime = (record.value / effectiveCapacity) * 1000;
+      // Calculate remaining bytes
+      const bytesRemaining = Math.max(0, state.bytesTotal - state.bytesProcessed);
 
-    // How much time has already elapsed
-    const elapsedTime = currentTime - processingInfo.startTime;
+      // Calculate time needed to process remaining bytes at current throughput
+      const timeRemainingMs = (bytesRemaining / throughputPerRecord) * 1000;
 
-    // Calculate progress as a fraction (capped at 1.0)
-    const progress = Math.min(elapsedTime / totalProcessingTime, 0.99);
+      // Set expected completion time for UI purposes
+      const expectedEndTime = currentTime + timeRemainingMs;
 
-    // Calculate remaining time based on current capacity
-    const remainingTime = Math.max(10, totalProcessingTime * (1 - progress));
+      // Store end time for visualization
+      if (!consumer.processingTimes) consumer.processingTimes = {};
+      consumer.processingTimes[record.id] = {
+        startTime: state.startTime,
+        endTime: expectedEndTime,
+        partitionId: partitionId
+      };
 
-    // Update the end time
-    processingInfo.endTime = currentTime + remainingTime;
-
-    // Update processing progress for visualization
-    if (record.isBeingProcessed) {
+      // Update the processing progress for visualization
+      const progress = Math.min(state.bytesProcessed / state.bytesTotal, 0.99);
       record.processingProgress = progress;
     }
   }
