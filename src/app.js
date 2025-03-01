@@ -362,7 +362,8 @@ const sketch = (p) => {
       partitions.push({
         id: i,
         y: CANVAS_PARTITION_START_Y + i * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING),
-        records: []
+        records: [],
+        currentOffset: 0 // Initialize offset counter for each partition
       });
     }
   }
@@ -687,21 +688,26 @@ const sketch = (p) => {
 
   // ------ STATE UPDATES ------
   function updatePartitions() {
-    // Save existing records
+    // Save existing records and offsets
     const oldRecords = {};
+    const oldOffsets = {};
     for (let i = 0; i < partitions.length; i++) {
       if (i < partitionCount) {
         oldRecords[i] = partitions[i].records;
+        oldOffsets[i] = partitions[i].currentOffset || 0;
       }
     }
 
     // Reinitialize partitions
     initializePartitions();
 
-    // Restore records where possible
+    // Restore records and offsets where possible
     for (let i = 0; i < partitionCount; i++) {
       if (oldRecords[i]) {
         partitions[i].records = oldRecords[i];
+      }
+      if (oldOffsets[i] !== undefined) {
+        partitions[i].currentOffset = oldOffsets[i];
       }
     }
 
@@ -826,6 +832,9 @@ const sketch = (p) => {
     const partitionId = recordKey % partitionCount;
     const recordSpeed = calculateRecordSpeed(recordSize);
 
+    // Get the current offset and increment it for this partition
+    const offset = partitions[partitionId].currentOffset++;
+
     // Create the record object
     const record = {
       id: recordIDIncrementCounter++,
@@ -835,6 +844,7 @@ const sketch = (p) => {
       producerId: producer.id,
       partitionId: partitionId,
       speed: recordSpeed,
+      offset: offset, // Add the partition offset
 
       // UI
       x: CANVAS_PARTITION_START_X + recordRadius, // Start position based on Partition
@@ -855,8 +865,8 @@ const sketch = (p) => {
     // Add visual effect for production
     addProducerLineToPartitionEffect(producer, partitionId);
 
-    // Log record production to console
-    console.log(`Record produced: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(recordSize)}, "partition": ${partitionId}, "producer": ${producer.id}}`);
+    // Log record production to console with offset
+    console.log(`Record produced: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(recordSize)}, "partition": ${partitionId}, "offset": ${offset}, "producer": ${producer.id}}`);
   }
 
   function calculateRecordRadius(size) {
@@ -1068,8 +1078,8 @@ const sketch = (p) => {
               lostBytes: lostBytes
             });
 
-            // Log completion with lost bytes
-            console.log(`Record processing completed: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "consumer": ${consumer.id}, "actualTimeMs": ${Math.round(actualTime)}, "lostBytes": ${Math.round(lostBytes)}}`);
+            // Log completion with lost bytes and offset
+            console.log(`Record processing completed: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "offset": ${record.offset}, "consumer": ${consumer.id}, "actualTimeMs": ${Math.round(actualTime)}, "lostBytes": ${Math.round(lostBytes)}}`);
 
             // If there are more records in the queue for this partition, process the next one
             if (consumer.processingQueues[partitionId] && consumer.processingQueues[partitionId].length > 0) {
@@ -1146,8 +1156,8 @@ const sketch = (p) => {
       estimatedTimeMs: estimatedProcessingTimeMs
     });
 
-    // Log processing start
-    console.log(`Record processing started: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "consumer": ${consumer.id}, "estimatedTimeMs": ${Math.round(estimatedProcessingTimeMs)}}`);
+    // Log processing start with offset
+    console.log(`Record processing started: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "offset": ${record.offset}, "consumer": ${consumer.id}, "estimatedTimeMs": ${Math.round(estimatedProcessingTimeMs)}}`);
 
     // After adding a new record, recalculate processing times for all records
     recalculateProcessingTimes(consumer, currentTime);
@@ -1331,12 +1341,12 @@ const sketch = (p) => {
       p.rect(CANVAS_PARTITION_START_X, partition.y, CANVAS_PARTITION_WIDTH, CANVAS_PARTITION_HEIGHT);
       p.pop();
 
-      // Draw partition label
+      // Draw partition label with current offset
       p.fill(0);
       p.noStroke();
       p.textAlign(p.RIGHT, p.CENTER);
       p.textSize(12);
-      p.text(`P${i}`, CANVAS_PARTITION_START_X - 10, partition.y + CANVAS_PARTITION_HEIGHT / 2);
+      p.text(`P${i} (${partition.currentOffset})`, CANVAS_PARTITION_START_X - 10, partition.y + CANVAS_PARTITION_HEIGHT / 2);
 
       // Draw records in the partition
       drawPartitionRecords(partition);
@@ -1358,6 +1368,12 @@ const sketch = (p) => {
         p.textAlign(p.CENTER, p.CENTER);
         p.textSize(10);
         p.text(record.key, record.x, partition.y + CANVAS_PARTITION_HEIGHT / 2);
+
+        // For larger records, also show offset
+        if (record.radius > 12) {
+          p.textSize(8);
+          p.text(`@${record.offset}`, record.x, partition.y + CANVAS_PARTITION_HEIGHT / 2 + 10);
+        }
       }
     }
   }
@@ -1576,6 +1592,12 @@ const sketch = (p) => {
         p.textAlign(p.CENTER, p.CENTER);
         p.textSize(10);
         p.text(record.key, record.x, record.y);
+
+        // For larger records, also show offset
+        if (record.radius > 12) {
+          p.textSize(8);
+          p.text(`@${record.offset}`, record.x, record.y + 10);
+        }
       }
 
       // For records being processed, show a progress indicator
