@@ -1,4 +1,8 @@
 import p5 from 'p5';
+import { createConsumerRenderer } from './canvas/consumers.js';
+import createProducerEffectsManager, { createProducerRenderer } from "./canvas/producers";
+import { createPartitionRenderer } from './canvas/partitions.js';
+import { formatBytes } from './utils.js';
 
 const sketch = (p) => {
     // ------ Canvas, UI and Animations ------
@@ -13,7 +17,7 @@ const sketch = (p) => {
     const CANVAS_CONSUMER_POSITION_X = CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH + 50;
     const CANVAS_RECORD_RADIUS_MAX = 15;
     const CANVAS_RECORD_RADIUS_MIN = 6;
-    const ANIMATION_PRODUCER_LINE_DURATION = 400;
+    const ANIMATION_PRODUCER_LINE_DURATION = 100;
 
     // Dynamic canvas height based on content
     let canvasHeightDynamic = CANVAS_HEIGHT;
@@ -41,7 +45,12 @@ const sketch = (p) => {
     let partitions = [];
     let producers = [];
     let consumers = [];
-    let producerEffects = [];
+
+    // Canvas Components
+    let producerEffectsManager;
+    let producerRenderer;
+    let consumerRenderer;
+    let partitionRenderer;
 
     // Metrics tracking with last-updated timestamps
     let metrics = {
@@ -108,6 +117,19 @@ const sketch = (p) => {
         // Create canvas and add it to the container div
         let canvas = p.createCanvas(CANVAS_WIDTH, canvasHeightDynamic);
         canvas.parent('canvas-container');
+
+        // Initialize Canvas Components
+        producerEffectsManager = createProducerEffectsManager(p);
+        producerRenderer = createProducerRenderer(p, CANVAS_PRODUCER_POSITION_X);
+        consumerRenderer = createConsumerRenderer(p, CANVAS_CONSUMER_POSITION_X);
+        partitionRenderer = createPartitionRenderer(
+            p,
+            CANVAS_PARTITION_START_X,
+            CANVAS_PARTITION_START_Y,
+            CANVAS_PARTITION_WIDTH,
+            CANVAS_PARTITION_HEIGHT,
+            CANVAS_PARTITION_HEIGHT_SPACING
+        );
 
         metrics.startTime = p.millis();
         metrics.lastUpdateTime = metrics.startTime;
@@ -340,7 +362,6 @@ const sketch = (p) => {
     function initializeState() {
         // Reset counters and state
         recordIDIncrementCounter = 0;
-        producerEffects = [];
 
         // Reset metrics
         metrics = {
@@ -802,15 +823,13 @@ const sketch = (p) => {
 
     function updateSimulation() {
         // In p5.js, this is called every frame (60 times per second)
+        producerEffectsManager.update();
         produceRecords();
         updateRecordPositions();
         consumeRecords();
     }
 
     function produceRecords() {
-        // Process producer effects first
-        updateProducerEffects();
-
         const currentTime = p.millis();
 
         // Check for new records to produce
@@ -831,15 +850,6 @@ const sketch = (p) => {
 
                 // Update last produce time to current time
                 producer.lastProduceTime = currentTime;
-            }
-        }
-    }
-
-    function updateProducerEffects() {
-        // Remove expired producer effects
-        for (let i = producerEffects.length - 1; i >= 0; i--) {
-            if (p.millis() >= producerEffects[i].endTime) {
-                producerEffects.splice(i, 1);
             }
         }
     }
@@ -885,7 +895,14 @@ const sketch = (p) => {
         eventEmitter.emit(EVENTS.RECORD_PRODUCED, record);
 
         // Add visual effect for production
-        addProducerLineToPartitionEffect(producer, partitionId);
+        producerEffectsManager.addEffect(
+            CANVAS_PRODUCER_POSITION_X + 15,
+            producer.y,
+            CANVAS_PARTITION_START_X,
+            partitions[partitionId].y + CANVAS_PARTITION_HEIGHT / 2,
+            producer.color,
+            ANIMATION_PRODUCER_LINE_DURATION
+        );
 
         // Log record production to console with timestamps
         console.log(`Record produced: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(recordSize)}, "partition": ${partitionId}, "offset": ${offset}, "producer": ${producer.id}, "producedAt": ${p.millis().toFixed(2)}, "eventTime": ${eventTime.toFixed(2)}}`);
@@ -936,20 +953,6 @@ const sketch = (p) => {
                 }
             }
         }
-    }
-
-    function addProducerLineToPartitionEffect(producer, partitionId) {
-        // Create a visual effect line from producer to partition
-        const effect = {
-            startX: CANVAS_PRODUCER_POSITION_X + 15,
-            startY: producer.y,
-            endX: CANVAS_PARTITION_START_X,
-            endY: partitions[partitionId].y + CANVAS_PARTITION_HEIGHT / 2,
-            color: producer.color,
-            endTime: p.millis() + ANIMATION_PRODUCER_LINE_DURATION
-        };
-
-        producerEffects.push(effect);
     }
 
     function updateRecordPositions() {
@@ -1291,299 +1294,21 @@ const sketch = (p) => {
         p.push();
 
         // Draw simulation components
-        drawPartitions();
-        drawProducers();
-        drawConsumers();
-        drawProducerEffects();
+        partitionRenderer.drawPartitions(partitions);
+        producerRenderer.drawProducers(producers, metrics)
+        consumerRenderer.drawConsumersWithConnections(
+            consumers,
+            partitions,
+            metrics,
+            CANVAS_PARTITION_START_X,
+            CANVAS_PARTITION_WIDTH,
+            CANVAS_PARTITION_HEIGHT
+        );
+        producerEffectsManager.draw();
+
         drawMetricsPanel();
 
         p.pop();
-    }
-
-    function drawPartitions() {
-        // Set consistent styling for all partitions
-        p.fill(255);
-        p.stroke(0);
-        p.strokeWeight(1);
-
-        for (let i = 0; i < partitions.length; i++) {
-            const partition = partitions[i];
-
-            // Start fresh for each partition to ensure consistent styling
-            p.push();
-            p.fill(255);
-            p.stroke(0);
-            p.strokeWeight(1);
-
-            // Draw partition rectangle
-            p.rect(CANVAS_PARTITION_START_X, partition.y, CANVAS_PARTITION_WIDTH, CANVAS_PARTITION_HEIGHT);
-            p.pop();
-
-            // Draw partition label with current offset
-            p.fill(0);
-            p.noStroke();
-            p.textAlign(p.RIGHT, p.CENTER);
-            p.textSize(12);
-            p.text(`P${i} (${partition.currentOffset})`, CANVAS_PARTITION_START_X - 10, partition.y + CANVAS_PARTITION_HEIGHT / 2);
-
-            // Draw records in the partition
-            drawPartitionRecords(partition);
-        }
-    }
-
-    function drawPartitionRecords(partition) {
-        for (const record of partition.records) {
-            // Draw Record circle
-            p.fill(record.color);
-            p.stroke(0);
-            p.strokeWeight(1);
-            p.ellipse(record.x, partition.y + CANVAS_PARTITION_HEIGHT / 2, record.radius * 2, record.radius * 2);
-
-            p.fill(255);
-            p.noStroke();
-            p.textAlign(p.CENTER, p.CENTER);
-            p.textSize(10);
-            p.text(record.key, record.x, partition.y + CANVAS_PARTITION_HEIGHT / 2);
-
-            // Processing Records circular progress bar - now thinner and touches the record border
-            if (record.isBeingProcessed && record.processingProgress !== undefined) {
-                p.noFill();
-                p.stroke(0, 179, 0);
-                p.strokeWeight(2); // Changed from 5px to 2px
-                p.arc(record.x, partition.y + CANVAS_PARTITION_HEIGHT / 2,
-                    (record.radius + 1) * 2, (record.radius + 1) * 2, // Reduced multiplier to touch record's edge
-                    -p.HALF_PI, -p.HALF_PI + p.TWO_PI * record.processingProgress);
-            }
-        }
-    }
-
-    function drawProducers() {
-        for (let i = 0; i < producers.length; i++) {
-            drawProducerComponent(producers[i], i);
-        }
-    }
-
-    function drawProducerComponent(producer, index) {
-        p.push(); // Start a new drawing context
-        p.translate(CANVAS_PRODUCER_POSITION_X, producer.y); // Set the origin to the producer position
-
-        // Get metrics for this producer
-        const producerMetrics = metrics.producers[producer.id] || {
-            recordsProduced: 0,
-            bytesProduced: 0,
-            produceRate: 0,
-            recordsRate: 0
-        };
-
-        // Producer metrics data
-        const metricsData = [
-            `Records: ${producerMetrics.recordsProduced}`,
-            `Sum B: ${formatBytes(producerMetrics.bytesProduced)}`,
-            `${Math.round(producerMetrics.produceRate)} B/s`,
-            `${Math.round(producerMetrics.recordsRate * 100) / 100} rec/s`
-        ];
-
-        // Calculate metrics box dimensions
-        p.textSize(10);
-        const textHeight = 15; // Height per line of text
-        const textPadding = 2; // Padding between text and border
-        const metricsWidth = p.max(
-            p.textWidth(metricsData[0]),
-            p.textWidth(metricsData[1]),
-            p.textWidth(metricsData[2]),
-            p.textWidth(metricsData[3])
-        ) + textPadding * 2;
-        const metricsHeight = textHeight * metricsData.length + textPadding * 2;
-
-        // Draw metrics box - positioned to touch the producer triangle
-        p.noFill();
-        p.stroke(producer.color);
-        p.strokeWeight(1);
-        p.rect(-metricsWidth - 15, -metricsHeight / 2, metricsWidth, metricsHeight);
-
-        // Draw metrics text
-        p.fill(0);
-        p.noStroke();
-        p.textAlign(p.LEFT, p.TOP);
-        for (let i = 0; i < metricsData.length; i++) {
-            p.text(
-                metricsData[i],
-                -metricsWidth - 15 + textPadding,
-                -metricsHeight / 2 + i * textHeight + textPadding
-            );
-        }
-
-        // Draw producer symbol (triangle)
-        p.fill(producer.color);
-        p.stroke(0);
-        p.strokeWeight(1);
-        p.triangle(-15, -15, 15, 0, -15, 15);
-
-        // Draw producer ID inside the triangle
-        p.fill(255);
-        p.noStroke();
-        p.textAlign(p.CENTER, p.CENTER);
-        p.textSize(10);
-        p.textStyle(p.BOLD);
-        p.text(index, -10, 0);
-        p.textStyle(p.NORMAL);
-
-        p.pop(); // Restore the drawing context
-    }
-
-    function drawConsumers() {
-        for (let i = 0; i < consumers.length; i++) {
-            const consumer = consumers[i];
-
-            // Draw consumer as a component with its metrics
-            drawConsumerComponent(consumer, i);
-
-            // Draw lines between consumer and its assigned partitions
-            drawConsumerPartitionConnections(consumer);
-
-            // We no longer draw transit records since they stay in the partition
-        }
-    }
-
-    function drawConsumerComponent(consumer, index) {
-        const consumerY = consumer.y;
-
-        p.push(); // Start a new drawing context
-        p.translate(CANVAS_CONSUMER_POSITION_X, consumerY); // Set the origin to the consumer position
-
-        // Get metrics for this consumer
-        const consumerMetrics = metrics.consumers[consumer.id] || {
-            recordsConsumed: 0,
-            bytesConsumed: 0,
-            consumeRate: 0,
-            recordsRate: 0
-        };
-
-        // Consumer metrics data
-        const metricsData = [
-            `Records: ${consumerMetrics.recordsConsumed}`,
-            `Sum B: ${formatBytes(consumerMetrics.bytesConsumed)}`,
-            `${Math.round(consumerMetrics.consumeRate)} B/s`,
-            `${Math.round(consumerMetrics.recordsRate * 100) / 100} rec/s`
-        ];
-
-        // Calculate metrics box dimensions
-        p.textSize(10);
-        const textHeight = 15; // Height per line of text
-        const textPadding = 2; // Padding between text and border
-        const metricsWidth = p.max(
-            ...metricsData.map(text => p.textWidth(text))
-        ) + textPadding * 2;
-        const metricsHeight = textHeight * metricsData.length + textPadding * 2;
-
-        // Use gray color for unassigned consumers
-        const borderColor = consumer.assignedPartitions.length === 0 ? p.color(200) : consumer.color;
-
-        // Draw metrics box - vertically centered with the consumer square
-        p.noFill();
-        p.stroke(borderColor);
-        p.strokeWeight(1);
-        p.rect(30, -metricsHeight / 2, metricsWidth, metricsHeight);
-
-        // Draw metrics text
-        p.fill(0);
-        p.noStroke();
-        p.textAlign(p.LEFT, p.TOP);
-        for (let i = 0; i < metricsData.length; i++) {
-            p.text(metricsData[i], 30 + textPadding, -metricsHeight / 2 + textPadding + i * textHeight);
-        }
-
-        // Draw consumer rectangle - always use regular color regardless of busy state
-        p.fill(consumer.color);
-        p.stroke(0);
-        p.strokeWeight(1);
-        p.rect(0, -15, 30, 30);
-
-        // Draw consumer ID inside rectangle
-        p.fill(255);
-        p.noStroke();
-        p.textAlign(p.CENTER, p.CENTER);
-        p.textStyle(p.BOLD);
-        p.text(index, 15, 0);
-        p.textStyle(p.NORMAL);
-
-        // No longer showing active partition count for cleaner UI
-
-        p.pop(); // Restore the drawing context
-    }
-
-    function drawConsumerPartitionConnections(consumer) {
-        p.stroke(consumer.color);
-        p.strokeWeight(1.8);
-        p.drawingContext.setLineDash([5, 5]);
-
-        for (const partitionId of consumer.assignedPartitions) {
-            const partitionY = partitions[partitionId].y + CANVAS_PARTITION_HEIGHT / 2;
-            p.line(CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH, partitionY, CANVAS_CONSUMER_POSITION_X, consumer.y);
-        }
-
-        p.drawingContext.setLineDash([]);
-    }
-
-    function drawTransitRecords(consumer) {
-        // Skip if transitRecords isn't initialized
-        if (!consumer.transitRecords) return;
-
-        for (const record of consumer.transitRecords) {
-            // Skip processed records
-            if (record.isProcessed) continue;
-
-            // Change color based on record state
-            if (record.isBeingProcessed) {
-                // Use a pulsing effect for active processing
-                const pulseFreq = 0.1;
-                const pulseAmount = (p.sin(p.frameCount * pulseFreq) * 0.3) + 0.7;
-                const c = p.color(record.color);
-                c.setAlpha(pulseAmount * 255);
-                p.fill(c);
-            } else if (record.isWaiting) {
-                // Waiting records are more transparent
-                const c = p.color(record.color);
-                c.setAlpha(180);
-                p.fill(c);
-            } else {
-                // Normal records
-                p.fill(record.color);
-            }
-
-            p.stroke(0);
-            p.strokeWeight(1);
-            p.ellipse(record.x, record.y, record.radius * 2, record.radius * 2);
-
-            // Draw record key inside if large enough
-            if (record.radius > 8) {
-                p.fill(255);
-                p.noStroke();
-                p.textAlign(p.CENTER, p.CENTER);
-                p.textSize(10);
-                p.text(record.key, record.x, record.y);
-            }
-
-            // For records being processed, show a progress indicator
-            if (record.isBeingProcessed && record.processingProgress !== undefined) {
-                p.noFill();
-                p.stroke(0, 255, 0);
-                p.strokeWeight(2);
-                p.arc(record.x, record.y, record.radius * 2.5, record.radius * 2.5,
-                    -p.HALF_PI, -p.HALF_PI + p.TWO_PI * record.processingProgress);
-            }
-        }
-    }
-
-    function drawProducerEffects() {
-        // Draw any active producer effects
-        for (const effect of producerEffects) {
-            p.push();
-            p.strokeWeight(2);
-            p.stroke(effect.color);
-            p.line(effect.startX, effect.startY, effect.endX, effect.endY);
-            p.pop();
-        }
     }
 
     // New function to draw global metrics panel
@@ -1618,16 +1343,6 @@ const sketch = (p) => {
     }
 
     // ------ UTILITIES ------
-    function formatBytes(bytes) {
-        if (bytes < 1000) {
-            return Math.round(bytes) + ' B';
-        } else if (bytes < 1000 * 1000) {
-            return (bytes / 1000).toFixed(2) + ' KB';
-        } else {
-            return (bytes / (1000 * 1000)).toFixed(2) + ' MB';
-        }
-    }
-
     function colorFromHSB(h, s, b) {
         p.colorMode(p.HSB, 360, 100, 100);
         const col = p.color(h, s, b);
