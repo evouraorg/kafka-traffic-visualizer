@@ -1,9 +1,5 @@
-import p5 from 'p5';
-
-// The actual configuration values - the only object directly accessed by application code
 export const Config = {};
 
-// Metadata for configuration properties - containing validation rules and defaults
 export const ConfigMetadata = {
     partitionsAmount: {
         min: 1,
@@ -86,10 +82,8 @@ export const ConfigMetadata = {
     }
 };
 
-// Configuration management functions
 export default function createConfigManager() {
     return {
-        // Private properties
         _p: null,
         _uiElements: {},
         _observers: {},
@@ -383,12 +377,6 @@ export default function createConfigManager() {
             return true;
         },
 
-        // Get the current value of a configuration property
-        getValue(key) {
-            return Config[key];
-        },
-
-        // Notify observers of a configuration change
         _notifyObservers(key, newValue, oldValue) {
             if (this._observers[key]) {
                 this._observers[key].forEach(callback => {

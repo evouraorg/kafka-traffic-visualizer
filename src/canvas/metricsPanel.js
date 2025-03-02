@@ -1,9 +1,24 @@
 import {formatBytes} from '../utils.js';
 
 export function createMetricsPanelRenderer(p, panelX = 20, panelY = 20) {
+    function formatElapsedTime(ms) {
+        if (ms < 1000) {
+            return `${ms.toFixed(0)}ms`;
+        } else if (ms < 60000) {
+            const seconds = Math.floor(ms / 1000);
+            const remainingMs = ms % 1000;
+            return `${seconds}s ${remainingMs.toFixed(0)}ms`;
+        } else {
+            const minutes = Math.floor(ms / 60000);
+            const seconds = Math.floor((ms % 60000) / 1000);
+            const remainingMs = ms % 1000;
+            return `${minutes}m ${seconds}s ${remainingMs.toFixed(0)}ms`;
+        }
+    }
+
     function drawMetricsPanel(metrics, consumers = []) {
         const panelWidth = 160;
-        const panelHeight = 80;
+        const panelHeight = 110; // Increased to fit new metrics
 
         // Calculate active consumer count (consumers with assigned partitions)
         let consumerThroughput = 0;
@@ -28,6 +43,8 @@ export function createMetricsPanelRenderer(p, panelX = 20, panelY = 20) {
         p.textSize(12);
         p.text("Global Metrics:", panelX + 5, panelY + 5);
 
+        const elapsedMs = p.millis();
+
         p.textSize(10);
         p.text(`Records: ${metrics.global.totalRecordsProduced} → ${metrics.global.totalRecordsConsumed}`,
             panelX + 5, panelY + 25);
@@ -37,6 +54,10 @@ export function createMetricsPanelRenderer(p, panelX = 20, panelY = 20) {
             panelX + 5, panelY + 55);
         p.text(`Consumers Throughput: ${formatBytes(consumerThroughput)}`,
             panelX + 5, panelY + 70);
+        p.text(`Elapsed ms: ${elapsedMs.toFixed(0)}`,
+            panelX + 5, panelY + 85);
+        p.text(`Elapsed time: ${formatElapsedTime(elapsedMs)}`,
+            panelX + 5, panelY + 100);
         p.pop();
     }
 
