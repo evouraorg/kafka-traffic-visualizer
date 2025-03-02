@@ -123,9 +123,9 @@
             <div class="control-label">Consumer Assignment:</div>
             <div class="control-input">
               <select id="assignmentStrategySelect">
+                <option value="sticky">Sticky</option>
                 <option value="round-robin">Round Robin</option>
                 <option value="range">Range</option>
-                <option value="sticky">Sticky</option>
                 <option value="cooperative-sticky">Cooperative Sticky</option>
               </select>
             </div>
@@ -156,28 +156,28 @@
               <input type="text" id="produceRandomnessInput" value="0.2">
             </div>
           </div>
-          
+
           <div class="control-group">
-            <div class="control-label">Processing Speed:</div>
+            <div class="control-label">Consumer throughput:</div>
             <div class="control-input">
-              <input type="range" id="processingSpeedSlider" min="0.5" max="10" value="1.0" step="0.5">
-              <input type="text" id="processingSpeedInput" value="1.0">
+              <input type="range" id="processingCapacitySlider" min="1000" max="2000000" step="1000" value="1000">
+              <input type="text" id="processingCapacityInput" value="1000">
             </div>
           </div>
 
           <div class="control-group">
-            <div class="control-label">Processing capacity (B/s):</div>
+            <div class="control-label">Partition Bandwidth:</div>
             <div class="control-input">
-              <input type="range" id="processingCapacitySlider" min="1000" max="2000000" step="1000" value="5000">
-              <input type="number" id="processingCapacityInput" value="5000">
+              <input type="range" id="partitionBandwidthSlider" min="1000" max="100000" step="1000" value="1000">
+              <input type="text" id="partitionBandwidthInput" value="1000">
             </div>
           </div>
           
           <div class="control-group">
             <div class="control-label">Min Value Size:</div>
             <div class="control-input">
-              <input type="range" id="minValueSizeSlider" min="1" max="10000" value="10">
-              <input type="text" id="minValueSizeInput" value="10">
+              <input type="range" id="minValueSizeSlider" min="1" max="10000" value="1000">
+              <input type="text" id="minValueSizeInput" value="1000">
             </div>
           </div>
           
