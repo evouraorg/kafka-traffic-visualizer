@@ -930,12 +930,12 @@ const sketch = (p) => {
       for (let i = 0; i < partition.records.length; i++) {
         const record = partition.records[i];
 
+        // Define the maximum position inside the partition
+        const maxX = CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH - record.radius - 5; // Keep records fully inside
+
         // Check if we're at the front of the line
         if (i === 0) {
-          // First record can always move forward up to the end
-          const maxX = CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH - record.radius;
-
-          // Move record forward
+          // First record can always move forward up to the max position inside the partition
           const newX = p.min(record.x + record.speed, maxX);
 
           // If record reaches the end of the partition, emit an event
@@ -964,17 +964,51 @@ const sketch = (p) => {
       // Second pass: Sort records by x position to ensure display order matches processing order
       partition.records.sort((a, b) => b.x - a.x);
 
-      // Third pass: If there are records at the end, adjust their positions to prevent overflow
-      let endRecords = partition.records.filter(r =>
-          r.x >= CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH - r.radius - 2);
+      // Third pass: If there are records being processed, ensure they stay at the end
+      // but inside the partition, and adjust other records accordingly
+      if (partition.records.length > 0) {
+        // Find any records that are being processed
+        const processingRecords = partition.records.filter(r => r.isBeingProcessed);
+        const otherRecords = partition.records.filter(r => !r.isBeingProcessed);
 
-      if (endRecords.length > 1) {
-        // Calculate a nice stacking pattern
-        for (let i = 0; i < endRecords.length; i++) {
-          const record = endRecords[i];
-          // Position in a staggered pattern at the end
-          const offset = i * 5; // Slight offset for each record
-          record.x = CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH - record.radius - 2 - offset;
+        // If we have records being processed, position them at the end but inside
+        if (processingRecords.length > 0) {
+          // Position processing records at the rightmost position inside the partition
+          for (let i = 0; i < processingRecords.length; i++) {
+            const record = processingRecords[i];
+            // Place at end position with slight offset if multiple records processing
+            const offset = i * 5;
+            record.x = CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH - record.radius - 5 - offset;
+          }
+
+          // Now adjust other records' positions to avoid overlap
+          if (otherRecords.length > 0) {
+            // Sort other records by position for consistent layout
+            otherRecords.sort((a, b) => b.x - a.x);
+
+            // Make sure the first record doesn't overlap with the processing records
+            const firstNonProcessing = otherRecords[0];
+            const lastProcessing = processingRecords[processingRecords.length - 1];
+            const minDistance = firstNonProcessing.radius + lastProcessing.radius;
+
+            const maxPossibleX = lastProcessing.x - minDistance;
+            if (firstNonProcessing.x > maxPossibleX) {
+              // Adjust position
+              firstNonProcessing.x = maxPossibleX;
+
+              // And cascade adjustment to other records behind it
+              for (let i = 1; i < otherRecords.length; i++) {
+                const record = otherRecords[i];
+                const recordAhead = otherRecords[i - 1];
+                const minDist = record.radius + recordAhead.radius;
+                const maxPos = recordAhead.x - minDist;
+
+                if (record.x > maxPos) {
+                  record.x = maxPos;
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -1081,6 +1115,16 @@ const sketch = (p) => {
             // Log completion with lost bytes and offset
             console.log(`Record processing completed: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "offset": ${record.offset}, "consumer": ${consumer.id}, "actualTimeMs": ${Math.round(actualTime)}, "lostBytes": ${Math.round(lostBytes)}}`);
 
+            // Now remove the record from the partition since processing is complete
+            const partition = partitions[partitionId];
+            if (partition) {
+              // Find and remove this record from the partition
+              const recordIndex = partition.records.findIndex(r => r.id === record.id);
+              if (recordIndex >= 0) {
+                partition.records.splice(recordIndex, 1);
+              }
+            }
+
             // If there are more records in the queue for this partition, process the next one
             if (consumer.processingQueues[partitionId] && consumer.processingQueues[partitionId].length > 0) {
               const nextRecord = consumer.processingQueues[partitionId].shift();
@@ -1104,15 +1148,15 @@ const sketch = (p) => {
           const firstRecord = partition.records[0];
 
           // Check if record has reached the end of the partition
-          if (firstRecord.x >= CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH - firstRecord.radius - 2) {
-            // Remove record from partition
-            const record = partition.records.shift();
+          if (firstRecord.x >= CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH - firstRecord.radius - 5) {
+            // Don't remove the record from the partition - keep it there during processing
+            // Just reference it in the consumer's active records
 
             // Start processing this record
-            startProcessingRecord(consumer, record, partitionId, currentTime);
+            startProcessingRecord(consumer, firstRecord, partitionId, currentTime);
 
-            // Create visual transit path
-            transferRecordToConsumer(consumer, record, partitionId);
+            // Mark record as being processed by this consumer (but it stays in the partition)
+            transferRecordToConsumer(consumer, firstRecord, partitionId);
           }
         }
       }
@@ -1148,6 +1192,15 @@ const sketch = (p) => {
     record.isWaiting = false;
     record.processingTimeMs = estimatedProcessingTimeMs;
     record.processingProgress = 0;
+
+    // If there's a transit record for this record, update its properties for synchronized animation
+    if (consumer.transitRecords) {
+      const transitRecord = consumer.transitRecords.find(tr => tr.id === record.id);
+      if (transitRecord) {
+        transitRecord.processingStartTime = currentTime;
+        transitRecord.estimatedProcessingTimeMs = estimatedProcessingTimeMs;
+      }
+    }
 
     // Emit event for processing start
     eventEmitter.emit(EVENTS.RECORD_PROCESSING_STARTED, {
@@ -1216,96 +1269,13 @@ const sketch = (p) => {
     }
   }
 
-  // Create a transit path for a record from partition to consumer
+  // Mark a record as being processed by a consumer (no longer creates a transit path)
   function transferRecordToConsumer(consumer, record, partitionId, isWaiting = false) {
-    // Calculate start and end points for transit
-    const startX = CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH;
-    const startY = partitions[partitionId].y + CANVAS_PARTITION_HEIGHT / 2;
-    const endX = CANVAS_CONSUMER_POSITION_X;
-    const endY = consumer.y;
-
-    // Make sure transitRecords exists
-    if (!consumer.transitRecords) consumer.transitRecords = [];
-
-    // Add to transit records with path information
-    consumer.transitRecords.push({
-      ...record,
-      x: startX,
-      y: startY,
-      startX: startX,
-      startY: startY,
-      endX: endX,
-      endY: endY,
-      progress: 0,
-      isWaiting: isWaiting, // Flag to indicate if record is waiting to be processed
-      isBeingProcessed: !isWaiting // Will be true if not waiting
-    });
-  }
-
-  // Handle record movement after reaching consumer
-  function updateTransitRecords() {
-    const currentTime = p.millis();
-
-    for (const consumer of consumers) {
-      // Skip if transitRecords isn't initialized
-      if (!consumer.transitRecords) continue;
-
-      for (let i = consumer.transitRecords.length - 1; i >= 0; i--) {
-        const record = consumer.transitRecords[i];
-
-        // Skip processed records - they will be removed
-        if (record.isProcessed) {
-          consumer.transitRecords.splice(i, 1);
-          continue;
-        }
-
-        // Check if this record is currently being processed
-        const partitionId = record.partitionId;
-        const isBeingProcessed = consumer.activePartitions &&
-            consumer.activePartitions[partitionId] &&
-            consumer.activePartitions[partitionId].id === record.id;
-
-        // Update record state based on actual processing state
-        record.isBeingProcessed = isBeingProcessed;
-
-        // Get progress for records being processed
-        if (isBeingProcessed && consumer.processingTimes && consumer.processingTimes[record.id]) {
-          const info = consumer.processingTimes[record.id];
-          const processingProgress = (currentTime - info.startTime) / (info.endTime - info.startTime);
-          record.processingProgress = Math.min(processingProgress, 1.0);
-        }
-
-        // Update position for records in transit (not waiting or being processed)
-        if (!record.isWaiting && !record.isBeingProcessed) {
-          record.progress += 0.05 * consumerRecordTransitSpeedAccelerator;
-
-          // Calculate new position along the path
-          record.x = p.lerp(record.startX, record.endX, record.progress);
-          record.y = p.lerp(record.startY, record.endY, record.progress);
-
-          // If record has reached the consumer, mark it as waiting
-          if (record.progress >= 1.0) {
-            record.x = record.endX;
-            record.y = record.endY;
-            record.isWaiting = true;
-          }
-        }
-
-        // Position waiting records in a queue near the consumer
-        if (record.isWaiting) {
-          // Find position in queue for this partition
-          const queueIndex = consumer.processingQueues[partitionId] ?
-              consumer.processingQueues[partitionId].findIndex(r => r && r.id === record.id) : -1;
-
-          if (queueIndex !== -1) {
-            // Position in a queue near the consumer, organized by partition
-            const partitionOffset = consumer.assignedPartitions.indexOf(parseInt(partitionId)) * 25;
-            record.x = CANVAS_CONSUMER_POSITION_X - 40;
-            record.y = consumer.y + partitionOffset + (queueIndex + 1) * 15;
-          }
-        }
-      }
-    }
+    // We no longer need to create a transit animation
+    // Just mark the record as being processed so it stays in place in the partition
+    record.isBeingProcessed = !isWaiting;
+    record.isWaiting = isWaiting;
+    record.processingConsumerId = consumer.id; // Mark which consumer is processing this record
   }
 
   // ------ RENDERING ------
@@ -1355,8 +1325,20 @@ const sketch = (p) => {
 
   function drawPartitionRecords(partition) {
     for (const record of partition.records) {
+      // Determine fill color based on processing state
+      if (record.isBeingProcessed) {
+        // Use a pulsing effect for active processing
+        const pulseFreq = 0.1;
+        const pulseAmount = (p.sin(p.frameCount * pulseFreq) * 0.3) + 0.7;
+        const c = p.color(record.color);
+        c.setAlpha(pulseAmount * 255);
+        p.fill(c);
+      } else {
+        // Normal records
+        p.fill(record.color);
+      }
+
       // Draw record circle
-      p.fill(record.color);
       p.stroke(0);
       p.strokeWeight(1);
       p.ellipse(record.x, partition.y + CANVAS_PARTITION_HEIGHT / 2, record.radius * 2, record.radius * 2);
@@ -1368,11 +1350,28 @@ const sketch = (p) => {
         p.textAlign(p.CENTER, p.CENTER);
         p.textSize(10);
         p.text(record.key, record.x, partition.y + CANVAS_PARTITION_HEIGHT / 2);
+      }
 
-        // For larger records, also show offset
-        if (record.radius > 12) {
-          p.textSize(8);
-          p.text(`@${record.offset}`, record.x, partition.y + CANVAS_PARTITION_HEIGHT / 2 + 10);
+      // For records being processed, show a progress indicator
+      if (record.isBeingProcessed && record.processingProgress !== undefined) {
+        p.noFill();
+        p.stroke(0, 255, 0);
+        p.strokeWeight(2);
+        p.arc(record.x, partition.y + CANVAS_PARTITION_HEIGHT / 2,
+            record.radius * 2.5, record.radius * 2.5,
+            -p.HALF_PI, -p.HALF_PI + p.TWO_PI * record.processingProgress);
+
+        // Draw line to consumer showing which consumer is processing this record
+        if (record.processingConsumerId !== undefined) {
+          const consumer = consumers.find(c => c.id === record.processingConsumerId);
+          if (consumer) {
+            p.stroke(consumer.color);
+            p.strokeWeight(1.5);
+            p.drawingContext.setLineDash([2, 2]);
+            p.line(record.x + record.radius + 2, partition.y + CANVAS_PARTITION_HEIGHT / 2,
+                CANVAS_CONSUMER_POSITION_X, consumer.y);
+            p.drawingContext.setLineDash([]);
+          }
         }
       }
     }
@@ -1462,8 +1461,7 @@ const sketch = (p) => {
       // Draw lines between consumer and its assigned partitions
       drawConsumerPartitionConnections(consumer);
 
-      // Draw transit records
-      drawTransitRecords(consumer);
+      // We no longer draw transit records since they stay in the partition
     }
   }
 
@@ -1529,15 +1527,7 @@ const sketch = (p) => {
     p.text(index, 15, 0);
     p.textStyle(p.NORMAL);
 
-    // Draw the number of active partitions for debugging
-    const activeCount = consumer.activePartitions ? Object.keys(consumer.activePartitions).length : 0;
-    if (activeCount > 0) {
-      p.fill(255, 0, 0);
-      p.noStroke();
-      p.textAlign(p.CENTER, p.CENTER);
-      p.textSize(9);
-      p.text(`${activeCount}`, 5, -10);
-    }
+    // No longer showing active partition count for cleaner UI
 
     p.pop(); // Restore the drawing context
   }
@@ -1592,12 +1582,6 @@ const sketch = (p) => {
         p.textAlign(p.CENTER, p.CENTER);
         p.textSize(10);
         p.text(record.key, record.x, record.y);
-
-        // For larger records, also show offset
-        if (record.radius > 12) {
-          p.textSize(8);
-          p.text(`@${record.offset}`, record.x, record.y + 10);
-        }
       }
 
       // For records being processed, show a progress indicator

@@ -1,6 +1,6 @@
-# Simple one
+# Kafka Traffic Visualizer
 
-Generate P5.js script that simulates a Kafka topic traffic with Producers generating Records with Key/Value and Consumers consuming those Records from the partitions.
+This project P5.js instance mode that simulates a Kafka topic traffic with Producers generating Records with Key/Value and Consumers consuming those Records from the partitions.
 Consider it's a single Topic.
 
 Topics:
@@ -40,15 +40,13 @@ Physics:
 - inside a Partition, Records can not move past each other, they have to respect the queue and can only be processed after the previous one is already processed
 - Records should accumulate inside a Partition when they are not consumed, they should remain stacked in the order they were produced, like a FIFO queue
 
+Code style:
+- Use early returns
+- Avoid nested loops, extract functions accordingly with single responsibility principle
+- Name variables and functions with Kafka internal terminology and distributed systems paradigms
+- Consider performing data structures
+- UI/Canvas/Drawing/Controls code should be separated from the Traffic simulation code
+- do not pass objects by reference to update them within a function, always return a new object with the updated values
 
 
-## Complex
-
-The size of the message influences how long it takes to process.
-Each partition can have at most 1 consumer.
-A consumer can consume 1 or more partitions. More consumers than partitions means idle consumers.
-
-Make amount of records failures configurable, 4 digits precision
-Make amount of records flowing through partitions configurable as throughput x/second
-Add randomness configuration
-Add delayed messages configuration
+## Chat history
