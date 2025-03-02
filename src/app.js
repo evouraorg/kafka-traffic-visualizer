@@ -1,8 +1,8 @@
 import p5 from 'p5';
-import { createConsumerRenderer } from './canvas/consumers.js';
-import createProducerEffectsManager, { createProducerRenderer } from "./canvas/producers";
-import { createPartitionRenderer } from './canvas/partitions.js';
-import { formatBytes } from './utils.js';
+import {createConsumerRenderer} from './canvas/consumers.js';
+import createProducerEffectsManager, {createProducerRenderer} from "./canvas/producers";
+import {createPartitionRenderer} from './canvas/partitions.js';
+import {createMetricsPanelRenderer} from './canvas/metricsPanel.js';
 
 const sketch = (p) => {
     // ------ Canvas, UI and Animations ------
@@ -51,6 +51,7 @@ const sketch = (p) => {
     let producerRenderer;
     let consumerRenderer;
     let partitionRenderer;
+    let metricsPanelRenderer;
 
     // Metrics tracking with last-updated timestamps
     let metrics = {
@@ -113,7 +114,7 @@ const sketch = (p) => {
     // Global event emitter
     const eventEmitter = new EventEmitter();
 
-    p.setup = () => {
+    p.setup = () => { // called once during boot
         // Create canvas and add it to the container div
         let canvas = p.createCanvas(CANVAS_WIDTH, canvasHeightDynamic);
         canvas.parent('canvas-container');
@@ -130,6 +131,7 @@ const sketch = (p) => {
             CANVAS_PARTITION_HEIGHT,
             CANVAS_PARTITION_HEIGHT_SPACING
         );
+        metricsPanelRenderer = createMetricsPanelRenderer(p);
 
         metrics.startTime = p.millis();
         metrics.lastUpdateTime = metrics.startTime;
@@ -144,17 +146,31 @@ const sketch = (p) => {
         initializeState();
     };
 
-    p.draw = () => {
+    p.draw = () => { // called 60 times/second
         p.background(240);
 
-        // Handle events
         handleControlChanges();
+        producerEffectsManager.update();
+        produceRecords();
+        updateRecordPositions();
+        consumeRecords();
 
-        // Update simulation
-        updateSimulation();
+        p.push();
+        // Draw simulation components
+        partitionRenderer.drawPartitions(partitions);
+        producerRenderer.drawProducers(producers, metrics)
+        consumerRenderer.drawConsumersWithConnections(
+            consumers,
+            partitions,
+            metrics,
+            CANVAS_PARTITION_START_X,
+            CANVAS_PARTITION_WIDTH,
+            CANVAS_PARTITION_HEIGHT
+        );
+        producerEffectsManager.draw();
+        metricsPanelRenderer.drawMetricsPanel(metrics, consumers);
 
-        // Render simulation
-        renderSimulation();
+        p.pop();
     };
 
     function setupEventHandlers() {
@@ -823,10 +839,7 @@ const sketch = (p) => {
 
     function updateSimulation() {
         // In p5.js, this is called every frame (60 times per second)
-        producerEffectsManager.update();
-        produceRecords();
-        updateRecordPositions();
-        consumeRecords();
+
     }
 
     function produceRecords() {
@@ -1289,67 +1302,6 @@ const sketch = (p) => {
         record.processingConsumerId = consumer.id; // Mark which consumer is processing this record
     }
 
-    // ------ RENDERING ------
-    function renderSimulation() {
-        p.push();
-
-        // Draw simulation components
-        partitionRenderer.drawPartitions(partitions);
-        producerRenderer.drawProducers(producers, metrics)
-        consumerRenderer.drawConsumersWithConnections(
-            consumers,
-            partitions,
-            metrics,
-            CANVAS_PARTITION_START_X,
-            CANVAS_PARTITION_WIDTH,
-            CANVAS_PARTITION_HEIGHT
-        );
-        producerEffectsManager.draw();
-
-        drawMetricsPanel();
-
-        p.pop();
-    }
-
-    // New function to draw global metrics panel
-    function drawMetricsPanel() {
-        const panelX = 20;
-        const panelY = 20;
-        const panelWidth = 160;
-        const panelHeight = 80;
-
-        // Draw panel background
-        p.fill(240);
-        p.stroke(100);
-        p.strokeWeight(1);
-        p.rect(panelX, panelY, panelWidth, panelHeight);
-
-        // Draw metrics text
-        p.fill(0);
-        p.noStroke();
-        p.textAlign(p.LEFT, p.TOP);
-        p.textSize(12);
-        p.text("Global Metrics:", panelX + 5, panelY + 5);
-
-        p.textSize(10);
-        p.text(`Records: ${metrics.global.totalRecordsProduced} → ${metrics.global.totalRecordsConsumed}`,
-            panelX + 5, panelY + 25);
-        p.text(`Bytes: ${formatBytes(metrics.global.totalBytesProduced)} → ${formatBytes(metrics.global.totalBytesConsumed)}`,
-            panelX + 5, panelY + 40);
-        p.text(`Avg Processing: ${Math.round(metrics.global.avgProcessingTimeMs)}ms`,
-            panelX + 5, panelY + 55);
-        p.text(`Consumer Throughput: ${formatBytes(consumerThroughputMaxInBytes)}/s`,
-            panelX + 5, panelY + 70);
-    }
-
-    // ------ UTILITIES ------
-    function colorFromHSB(h, s, b) {
-        p.colorMode(p.HSB, 360, 100, 100);
-        const col = p.color(h, s, b);
-        p.colorMode(p.RGB, 255, 255, 255);
-        return col;
-    }
-
     // Consumer partition assignment
     function rebalanceConsumerGroup(partitions, consumerCount, strategy = 'round-robin') {
         // Array to store partition assignments (which consumer owns which partition)
@@ -1432,6 +1384,14 @@ const sketch = (p) => {
         }
 
         return assignments;
+    }
+
+    // ------ UTILITIES ------
+    function colorFromHSB(h, s, b) {
+        p.colorMode(p.HSB, 360, 100, 100);
+        const col = p.color(h, s, b);
+        p.colorMode(p.RGB, 255, 255, 255);
+        return col;
     }
 };
 
