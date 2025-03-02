@@ -10,21 +10,21 @@ export const ConfigMetadata = {
 
     producersAmount: {
         min: 0,
-        max: 16,
+        max: 32,
         default: 1,
         type: 'number'
     },
 
     consumersAmount: {
         min: 0,
-        max: 16,
+        max: 32,
         default: 1,
         type: 'number'
     },
 
     producerRate: {
         min: 1,
-        max: 100,
+        max: 16,
         default: 1,
         type: 'number'
     },
@@ -40,7 +40,7 @@ export const ConfigMetadata = {
 
     partitionBandwidth: {
         min: 1000,
-        max: 100000,
+        max: 32000,
         step: 1000,
         default: 1000,
         type: 'number'
@@ -63,21 +63,21 @@ export const ConfigMetadata = {
     recordValueSizeMin: {
         min: 1,
         max: 10000,
-        default: 1000,
+        default: 800,
         type: 'number'
     },
 
     recordValueSizeMax: {
         min: 1,
         max: 10000,
-        default: 2000,
+        default: 1200,
         type: 'number'
     },
 
     recordKeyRange: {
         min: 1,
-        max: 2048,
-        default: 10,
+        max: 128,
+        default: 16,
         type: 'number'
     }
 };

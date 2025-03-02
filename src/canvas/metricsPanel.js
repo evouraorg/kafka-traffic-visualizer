@@ -46,7 +46,7 @@ export function createMetricsPanelRenderer(p, panelX = 20, panelY = 20) {
         const elapsedMs = p.millis();
 
         p.textSize(10);
-        p.text(`Records: ${metrics.global.totalRecordsProduced} → ${metrics.global.totalRecordsConsumed}`,
+        p.text(`Records: P ${metrics.global.totalRecordsProduced} → C ${metrics.global.totalRecordsConsumed} → Lag: ${metrics.global.totalRecordsProduced - metrics.global.totalRecordsConsumed}`,
             panelX + 5, panelY + 25);
         p.text(`Bytes: ${formatBytes(metrics.global.totalBytesProduced)} → ${formatBytes(metrics.global.totalBytesConsumed)}`,
             panelX + 5, panelY + 40);
