@@ -14,6 +14,7 @@ export function createMetricsPanelRenderer(p, panelX = 20, panelY = 20) {
             consumerThroughput += consumer.throughputMax
         });
 
+        p.push();
         // Draw panel background
         p.fill(240);
         p.stroke(100);
@@ -36,6 +37,7 @@ export function createMetricsPanelRenderer(p, panelX = 20, panelY = 20) {
             panelX + 5, panelY + 55);
         p.text(`Consumers Throughput: ${formatBytes(consumerThroughput)}`,
             panelX + 5, panelY + 70);
+        p.pop();
     }
 
     return {

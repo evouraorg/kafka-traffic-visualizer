@@ -76,7 +76,7 @@ const sketch = (p) => {
     let partitionInput, producerInput, consumerInput;
     let produceRateInput, minValueSizeInput, maxValueSizeInput;
     let keyRangeInput, produceRandomnessInput;
-    let assignmentStrategySelect;
+    let consumerAssignmentStrategySelect;
     let processingCapacitySlider, processingCapacityInput;
     let partitionBandwidthSlider, partitionBandwidthInput;
 
@@ -87,8 +87,6 @@ const sketch = (p) => {
         RECORD_REACHED_PARTITION_END: 'record_reached_partition_end',
         RECORD_PROCESSING_STARTED: 'record_processing_started',
         RECORD_PROCESSING_COMPLETED: 'record_processing_completed',
-        CONSUMER_THROUGHPUT_UPDATED: 'throughput_changed',
-        METRICS_UPDATE: 'metrics_update'
     };
 
     // Simple event emitter
@@ -155,7 +153,6 @@ const sketch = (p) => {
         partitionRenderer.drawPartitionRecordsMovement(partitions, eventEmitter);
         consumeRecords();
 
-        p.push();
         // Draw simulation components
         partitionRenderer.drawPartitions(partitions);
         producerRenderer.drawProducers(producers, metrics)
@@ -169,8 +166,6 @@ const sketch = (p) => {
         );
         producerEffectsManager.draw();
         metricsPanelRenderer.drawMetricsPanel(metrics, consumers);
-
-        p.pop();
     };
 
     function setupEventHandlers() {
@@ -242,14 +237,6 @@ const sketch = (p) => {
                 metrics.consumers[data.consumerId].lastUpdateTime = now;
             }
         });
-
-        eventEmitter.on(EVENTS.CONSUMER_THROUGHPUT_UPDATED, (data) => {
-            // When throughput changes, recalculate processing times for all active records
-            for (const consumer of consumers) {
-                if (!consumer.activePartitions) continue;
-                recalculateProcessingTimes(consumer, p.millis());
-            }
-        });
     }
 
     function setupControlReferences() {
@@ -257,7 +244,7 @@ const sketch = (p) => {
         partitionSlider = p.select('#partitionSlider');
         producerSlider = p.select('#producerSlider');
         consumerSlider = p.select('#consumerSlider');
-        assignmentStrategySelect = p.select('#assignmentStrategySelect');
+        consumerAssignmentStrategySelect = p.select('#consumerAssignmentStrategySelect');
         produceRateSlider = p.select('#produceRateSlider');
         keyRangeSlider = p.select('#keyRangeSlider');
         produceRandomnessSlider = p.select('#produceRandomnessSlider');
@@ -290,13 +277,7 @@ const sketch = (p) => {
         produceRandomnessSlider.input(() => handleSliderInput(produceRandomnessSlider, produceRandomnessInput, 'randomness'));
         minValueSizeSlider.input(() => handleSliderInput(minValueSizeSlider, minValueSizeInput, 'minSize'));
         maxValueSizeSlider.input(() => handleSliderInput(maxValueSizeSlider, maxValueSizeInput, 'maxSize'));
-        processingCapacitySlider.input(() => {
-            handleSliderInput(processingCapacitySlider, processingCapacityInput, 'capacity');
-            // Emit event for throughput change
-            eventEmitter.emit(EVENTS.CONSUMER_THROUGHPUT_UPDATED, {
-                value: parseInt(processingCapacitySlider.value())
-            });
-        });
+        processingCapacitySlider.input(() => handleSliderInput(processingCapacitySlider, processingCapacityInput, 'capacity'));
 
         // Add event listeners to text inputs
         partitionInput.input(() => handleTextInput(partitionInput, partitionSlider, 'partitions'));
@@ -307,13 +288,7 @@ const sketch = (p) => {
         produceRandomnessInput.input(() => handleTextInput(produceRandomnessInput, produceRandomnessSlider, 'randomness'));
         minValueSizeInput.input(() => handleTextInput(minValueSizeInput, minValueSizeSlider, 'minSize'));
         maxValueSizeInput.input(() => handleTextInput(maxValueSizeInput, maxValueSizeSlider, 'maxSize'));
-        processingCapacityInput.input(() => {
-            handleTextInput(processingCapacityInput, processingCapacitySlider, 'capacity');
-            // Emit event for throughput change
-            eventEmitter.emit(EVENTS.CONSUMER_THROUGHPUT_UPDATED, {
-                value: parseInt(processingCapacitySlider.value())
-            });
-        });
+        processingCapacityInput.input(() => handleTextInput(processingCapacityInput, processingCapacitySlider, 'capacity'));
 
         partitionBandwidthSlider.input(() => {
             handleSliderInput(partitionBandwidthSlider, partitionBandwidthInput, 'bandwidth');
@@ -326,8 +301,6 @@ const sketch = (p) => {
             partitionBandwidth = parseInt(partitionBandwidthSlider.value());
             updateAllRecordSpeeds();
         });
-
-        assignmentStrategySelect.changed(handleAssignmentStrategyChange);
     }
 
     function handleSliderInput(slider, textInput, type) {
@@ -672,14 +645,6 @@ const sketch = (p) => {
         p.resizeCanvas(CANVAS_WIDTH, canvasHeightDynamic);
     }
 
-    function handleAssignmentStrategyChange() {
-        consumerAssignmentStrategy = assignmentStrategySelect.value();
-        // Only update consumers if there are any
-        if (consumerCount > 0) {
-            updateConsumers();
-        }
-    }
-
     function handleControlChanges() {
         // Get values from sliders
         if (parseInt(partitionSlider.value()) !== partitionCount) {
@@ -697,18 +662,29 @@ const sketch = (p) => {
             updateConsumers();
         }
 
+        // Check if assignment strategy select exists and has changed
+        if (consumerAssignmentStrategySelect) {
+            const currentStrategy = consumerAssignmentStrategySelect.value();
+            if (currentStrategy !== consumerAssignmentStrategy) {
+                consumerAssignmentStrategy = currentStrategy;
+                // Only update consumers if there are any
+                if (consumerCount > 0) {
+                    updateConsumers();
+                }
+            }
+        }
+
+        // Update consumer processing capacity
+        consumerThroughputMaxInBytes = parseInt(processingCapacitySlider.value());
+        // Update all existing consumers
+        for (const consumer of consumers) {
+            consumer.throughputMax = consumerThroughputMaxInBytes;
+        }
+
         // Update simple settings
         producerRate = parseInt(produceRateSlider.value());
         recordKeyRange = parseInt(keyRangeSlider.value());
         producerDelayRandomFactor = parseFloat(produceRandomnessSlider.value());
-
-        if (processingCapacitySlider) {
-            const newThroughput = parseInt(processingCapacitySlider.value());
-            if (newThroughput !== consumerThroughputMaxInBytes) {
-                consumerThroughputMaxInBytes = newThroughput;
-                eventEmitter.emit(EVENTS.CONSUMER_THROUGHPUT_UPDATED, {value: consumerThroughputMaxInBytes});
-            }
-        }
 
         // Handle value size validation
         let newMinValueSize = parseInt(minValueSizeSlider.value());
@@ -837,11 +813,6 @@ const sketch = (p) => {
         updateCanvasHeight();
     }
 
-    function updateSimulation() {
-        // In p5.js, this is called every frame (60 times per second)
-
-    }
-
     function produceRecords() {
         const currentTime = p.millis();
 
@@ -917,8 +888,16 @@ const sketch = (p) => {
             ANIMATION_PRODUCER_LINE_DURATION
         );
 
-        // Log record production to console with timestamps
-        console.log(`Record produced: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(recordSize)}, "partition": ${partitionId}, "offset": ${offset}, "producer": ${producer.id}, "producedAt": ${p.millis().toFixed(2)}, "eventTime": ${eventTime.toFixed(2)}}`);
+        console.log("Record produced: {" +
+            "\"id\": " + record.id + ", " +
+            "\"key\": " + record.key + ", " +
+            "\"valueBytes\": " + Math.round(recordSize) + ", " +
+            "\"partition\": " + partitionId + ", " +
+            "\"offset\": " + offset + ", " +
+            "\"producer\": " + producer.id + ", " +
+            "\"producedAt\": " + p.millis().toFixed(1) + ", " +
+            "\"eventTime\": " + eventTime.toFixed(1) + "}"
+        );
     }
 
     function calculateRecordRadius(size) {
@@ -972,14 +951,6 @@ const sketch = (p) => {
         const currentTime = p.millis();
 
         for (const consumer of consumers) {
-            // Update consumer throughput from slider in real-time
-            if (processingCapacitySlider) {
-                const newThroughput = parseInt(processingCapacitySlider.value());
-                if (consumer.throughputMax !== newThroughput) {
-                    consumer.throughputMax = newThroughput;
-                }
-            }
-
             // Ensure we have the necessary data structures
             if (!consumer.activePartitions) consumer.activePartitions = {};
             if (!consumer.recordProcessingState) consumer.recordProcessingState = {}; // New tracking object
@@ -1038,11 +1009,11 @@ const sketch = (p) => {
                     state.lastProgressUpdate = currentTime;
 
                     // Update visual progress indicator
-                    const progress = Math.min(state.bytesProcessed / state.bytesTotal, 0.99);
-                    record.processingProgress = progress;
+                    record.processingProgress = Math.min(state.bytesProcessed / state.bytesTotal, 0.99);
 
                     // Check if record is complete
                     if (state.bytesProcessed >= state.bytesTotal) {
+                        const finishedTime = p.millis();
                         // Record is finished, remove it from active partitions
                         const finishedRecord = {...record};
                         delete consumer.activePartitions[partitionId];
@@ -1076,8 +1047,21 @@ const sketch = (p) => {
                             }
                         }
 
-                        // Log completion with lost bytes and offset
-                        console.log(`Record processing completed: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "offset": ${record.offset}, "consumer": ${consumer.id}, "actualTimeMs": ${Math.round(actualTime)}, "lostBytes": ${Math.round(lostBytes)}, "committedAt": ${p.millis().toFixed(2)}}`);
+                        // Calculate end-to-end latency in milliseconds
+                        const e2eLatencyMs = finishedTime - record.eventTime;
+
+                        console.log("Record processing completed: {" +
+                            "\"id\": " + record.id + ", " +
+                            "\"key\": " + record.key + ", " +
+                            "\"valueBytes\": " + Math.round(record.value) + ", " +
+                            "\"partition\": " + partitionId + ", " +
+                            "\"offset\": " + record.offset + ", " +
+                            "\"consumer\": " + consumer.id + ", " +
+                            "\"actualTimeMs\": " + Math.round(actualTime) + ", " +
+                            "\"lostBytes\": " + Math.round(lostBytes) + ", " +
+                            "\"committedAt\": " + finishedTime.toFixed(1) + ", " +
+                            "\"e2eLatencyMs\": " + Math.round(e2eLatencyMs) + "}"
+                        );
 
                         // If there are more records in the queue for this partition, process the next one
                         if (consumer.processingQueues[partitionId] && consumer.processingQueues[partitionId].length > 0) {
@@ -1117,7 +1101,6 @@ const sketch = (p) => {
         }
     }
 
-    // Completely redesigned function for starting record processing
     function startProcessingRecord(consumer, record, partitionId, currentTime) {
         // Ensure necessary data structures exist
         if (!consumer.activePartitions) consumer.activePartitions = {};
@@ -1163,8 +1146,15 @@ const sketch = (p) => {
             estimatedTimeMs: estimatedProcessingTimeMs
         });
 
-        // Log processing start with offset
-        console.log(`Record processing started: {"id": ${record.id}, "key": ${record.key}, "valueBytes": ${Math.round(record.value)}, "partition": ${partitionId}, "offset": ${record.offset}, "consumer": ${consumer.id}, "estimatedTimeMs": ${Math.round(estimatedProcessingTimeMs)}}`);
+        console.log("Record processing started: {" +
+            "\"id\": " + record.id + ", " +
+            "\"key\": " + record.key + ", " +
+            "\"valueBytes\": " + Math.round(record.value) + ", " +
+            "\"partition\": " + partitionId + ", " +
+            "\"offset\": " + record.offset + ", " +
+            "\"consumer\": " + consumer.id + ", " +
+            "\"estimatedTimeMs\": " + Math.round(estimatedProcessingTimeMs) + "}"
+        );
 
         // After adding a new record, recalculate processing times for all records
         recalculateProcessingTimes(consumer, currentTime);
@@ -1218,8 +1208,7 @@ const sketch = (p) => {
             };
 
             // Update the processing progress for visualization
-            const progress = Math.min(state.bytesProcessed / state.bytesTotal, 0.99);
-            record.processingProgress = progress;
+            record.processingProgress = Math.min(state.bytesProcessed / state.bytesTotal, 0.99);
         }
     }
 
