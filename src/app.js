@@ -3,6 +3,7 @@ import {createConsumerRenderer} from './canvas/consumers.js';
 import createProducerEffectsManager, {createProducerRenderer} from "./canvas/producers";
 import {createPartitionRenderer} from './canvas/partitions.js';
 import {createMetricsPanelRenderer} from './canvas/metricsPanel.js';
+import createConfigManager, {Config} from './config.js';
 
 const sketch = (p) => {
     // ------ Canvas, UI and Animations ------
@@ -19,27 +20,13 @@ const sketch = (p) => {
     const CANVAS_RECORD_RADIUS_MIN = 6;
     const ANIMATION_PRODUCER_LINE_DURATION = 100;
 
+    const ConfigManager = createConfigManager();
+
     // Dynamic canvas height based on content
     let canvasHeightDynamic = CANVAS_HEIGHT;
 
-    // Producer
-    let partitionCount = 8;
-    let producerCount = 2;
-    let producerRate = 1;
-    let producerDelayRandomFactor = 0.2; // randomly delays records between 0 and set value, in seconds
-
-    let partitionBandwidth = 10000; // Default 10KB/s
-
-    // Consumer
-    let consumerCount = 2;
-    let consumerAssignmentStrategy = 'sticky';
-    let consumerThroughputMaxInBytes = 5000; // Bytes per second processing capacity
-
-    // Record
-    let recordIDIncrementCounter = 0; // Counter for unique record IDs
-    let recordValueSizeMin = 1000;
-    let recordValueSizeMax = 3000;
-    let recordKeyRange = 10;
+    // Record ID counter
+    let recordIDIncrementCounter = 0;
 
     // Runtime Data structures
     let partitions = [];
@@ -68,17 +55,6 @@ const sketch = (p) => {
             processingTimeSamples: 0
         }
     };
-
-    // UI Controls (now referencing HTML elements)
-    let partitionSlider, producerSlider, consumerSlider;
-    let produceRateSlider, minValueSizeSlider, maxValueSizeSlider;
-    let keyRangeSlider, produceRandomnessSlider;
-    let partitionInput, producerInput, consumerInput;
-    let produceRateInput, minValueSizeInput, maxValueSizeInput;
-    let keyRangeInput, produceRandomnessInput;
-    let consumerAssignmentStrategySelect;
-    let processingCapacitySlider, processingCapacityInput;
-    let partitionBandwidthSlider, partitionBandwidthInput;
 
     // ------ EVENT SYSTEM ------
     // Event types for the reactive system
@@ -134,20 +110,57 @@ const sketch = (p) => {
         metrics.startTime = p.millis();
         metrics.lastUpdateTime = metrics.startTime;
 
-        // Get references to HTML controls
-        setupControlReferences();
-        attachControlEventListeners();
+        // Initialize configuration system FIRST before using any Config values
+        ConfigManager.init(p);
+
+        // Add universal logging of all config changes
+        ConfigManager.onChange('*', (newValue, oldValue, key) => {
+            if (console.debug) console.debug(JSON.stringify({
+                type: "observer_notification",
+                key,
+                newValue,
+                oldValue
+            }));
+        });
+
+        // Set up config observers
+        setupConfigObservers();
 
         // Set up event handlers
         setupEventHandlers();
 
-        initializeState();
+        // Reset counters and state
+        recordIDIncrementCounter = 0;
+
+        // Reset metrics
+        metrics = {
+            startTime: p.millis(),
+            lastUpdateTime: p.millis(),
+            producers: {},
+            consumers: {},
+            global: {
+                totalRecordsProduced: 0,
+                totalRecordsConsumed: 0,
+                totalBytesProduced: 0,
+                totalBytesConsumed: 0,
+                avgProcessingTimeMs: 0,
+                processingTimeSamples: 0
+            }
+        };
+
+        // Initialize data structures AFTER config is initialized
+        initializePartitions();
+        initializeProducers();
+        initializeConsumers();
+
+        // Update canvas height to accommodate partitions
+        updateCanvasHeight();
     };
 
     p.draw = () => { // called 60 times/second
         p.background(240);
 
-        handleControlChanges();
+        // No need for handleControlChanges anymore - changes happen through observers
         producerEffectsManager.update();
         produceRecords();
         partitionRenderer.drawPartitionRecordsMovement(partitions, eventEmitter);
@@ -155,7 +168,7 @@ const sketch = (p) => {
 
         // Draw simulation components
         partitionRenderer.drawPartitions(partitions);
-        producerRenderer.drawProducers(producers, metrics)
+        producerRenderer.drawProducers(producers, metrics);
         consumerRenderer.drawConsumersWithConnections(
             consumers,
             partitions,
@@ -167,6 +180,28 @@ const sketch = (p) => {
         producerEffectsManager.draw();
         metricsPanelRenderer.drawMetricsPanel(metrics, consumers);
     };
+
+    function setupConfigObservers() {
+        // Register observers for configuration changes that require data structure updates
+        ConfigManager.onChange('partitionsAmount', () => updatePartitions());
+        ConfigManager.onChange('producersAmount', () => updateProducers());
+        ConfigManager.onChange('consumersAmount', () => updateConsumers());
+
+        ConfigManager.onChange('consumerAssignmentStrategy', () => {
+            if (Config.consumersAmount > 0) {
+                updateConsumers();
+            }
+        });
+
+        ConfigManager.onChange('partitionBandwidth', () => updateAllRecordSpeeds());
+
+        ConfigManager.onChange('consumerThroughputMaxInBytes', (value) => {
+            // Update throughput for all existing consumers
+            for (const consumer of consumers) {
+                consumer.throughputMax = value;
+            }
+        });
+    }
 
     function setupEventHandlers() {
         // Set up reactive event handlers for metrics
@@ -239,148 +274,10 @@ const sketch = (p) => {
         });
     }
 
-    function setupControlReferences() {
-        // Get references to slider elements
-        partitionSlider = p.select('#partitionSlider');
-        producerSlider = p.select('#producerSlider');
-        consumerSlider = p.select('#consumerSlider');
-        consumerAssignmentStrategySelect = p.select('#consumerAssignmentStrategySelect');
-        produceRateSlider = p.select('#produceRateSlider');
-        keyRangeSlider = p.select('#keyRangeSlider');
-        produceRandomnessSlider = p.select('#produceRandomnessSlider');
-        minValueSizeSlider = p.select('#minValueSizeSlider');
-        maxValueSizeSlider = p.select('#maxValueSizeSlider');
-        processingCapacitySlider = p.select('#processingCapacitySlider');
-        partitionBandwidthSlider = p.select('#partitionBandwidthSlider');
-
-
-        // Get references to input elements
-        partitionInput = p.select('#partitionInput');
-        producerInput = p.select('#producerInput');
-        consumerInput = p.select('#consumerInput');
-        produceRateInput = p.select('#produceRateInput');
-        keyRangeInput = p.select('#keyRangeInput');
-        produceRandomnessInput = p.select('#produceRandomnessInput');
-        minValueSizeInput = p.select('#minValueSizeInput');
-        maxValueSizeInput = p.select('#maxValueSizeInput');
-        processingCapacityInput = p.select('#processingCapacityInput');
-        partitionBandwidthInput = p.select('#partitionBandwidthInput');
-    }
-
-    function attachControlEventListeners() {
-        // Add event listeners to sliders
-        partitionSlider.input(() => handleSliderInput(partitionSlider, partitionInput, 'partitions'));
-        producerSlider.input(() => handleSliderInput(producerSlider, producerInput, 'producers'));
-        consumerSlider.input(() => handleSliderInput(consumerSlider, consumerInput, 'consumers'));
-        produceRateSlider.input(() => handleSliderInput(produceRateSlider, produceRateInput, 'rate'));
-        keyRangeSlider.input(() => handleSliderInput(keyRangeSlider, keyRangeInput, 'keyRange'));
-        produceRandomnessSlider.input(() => handleSliderInput(produceRandomnessSlider, produceRandomnessInput, 'randomness'));
-        minValueSizeSlider.input(() => handleSliderInput(minValueSizeSlider, minValueSizeInput, 'minSize'));
-        maxValueSizeSlider.input(() => handleSliderInput(maxValueSizeSlider, maxValueSizeInput, 'maxSize'));
-        processingCapacitySlider.input(() => handleSliderInput(processingCapacitySlider, processingCapacityInput, 'capacity'));
-
-        // Add event listeners to text inputs
-        partitionInput.input(() => handleTextInput(partitionInput, partitionSlider, 'partitions'));
-        producerInput.input(() => handleTextInput(producerInput, producerSlider, 'producers'));
-        consumerInput.input(() => handleTextInput(consumerInput, consumerSlider, 'consumers'));
-        produceRateInput.input(() => handleTextInput(produceRateInput, produceRateSlider, 'rate'));
-        keyRangeInput.input(() => handleTextInput(keyRangeInput, keyRangeSlider, 'keyRange'));
-        produceRandomnessInput.input(() => handleTextInput(produceRandomnessInput, produceRandomnessSlider, 'randomness'));
-        minValueSizeInput.input(() => handleTextInput(minValueSizeInput, minValueSizeSlider, 'minSize'));
-        maxValueSizeInput.input(() => handleTextInput(maxValueSizeInput, maxValueSizeSlider, 'maxSize'));
-        processingCapacityInput.input(() => handleTextInput(processingCapacityInput, processingCapacitySlider, 'capacity'));
-
-        partitionBandwidthSlider.input(() => {
-            handleSliderInput(partitionBandwidthSlider, partitionBandwidthInput, 'bandwidth');
-            partitionBandwidth = parseInt(partitionBandwidthSlider.value());
-            updateAllRecordSpeeds();
-        });
-
-        partitionBandwidthInput.input(() => {
-            handleTextInput(partitionBandwidthInput, partitionBandwidthSlider, 'bandwidth');
-            partitionBandwidth = parseInt(partitionBandwidthSlider.value());
-            updateAllRecordSpeeds();
-        });
-    }
-
-    function handleSliderInput(slider, textInput, type) {
-        // Update text input when slider changes
-        let value = slider.value();
-
-        // Format the value for display
-        if (type === 'randomness') {
-            textInput.value(parseFloat(value).toFixed(3));
-        } else {
-            textInput.value(value);
-        }
-    }
-
-    function handleTextInput(textInput, slider, type) {
-        // Validate and update slider when text input changes
-        let value = parseFloat(textInput.value());
-
-        // Check if input is a valid number
-        if (isNaN(value)) {
-            // Restore to slider value if invalid
-            textInput.value(slider.value());
-            return;
-        }
-
-        // Ensure value is within slider range
-        const min = slider.attribute('min');
-        const max = slider.attribute('max');
-        const step = slider.attribute('step') || 1;
-
-        value = p.constrain(value, min, max);
-
-        // Round to nearest step if needed
-        if (step !== 1) {
-            value = Math.round(value / step) * step;
-        } else {
-            // For integer sliders, ensure integer value
-            if (['partitions', 'producers', 'consumers', 'keyRange'].includes(type)) {
-                value = Math.round(value);
-            }
-        }
-
-        // Update slider with validated value
-        slider.value(value);
-        textInput.value(value);
-    }
-
-    function initializeState() {
-        // Reset counters and state
-        recordIDIncrementCounter = 0;
-
-        // Reset metrics
-        metrics = {
-            startTime: p.millis(),
-            lastUpdateTime: p.millis(),
-            producers: {},
-            consumers: {},
-            global: {
-                totalRecordsProduced: 0,
-                totalRecordsConsumed: 0,
-                totalBytesProduced: 0,
-                totalBytesConsumed: 0,
-                avgProcessingTimeMs: 0,
-                processingTimeSamples: 0
-            }
-        };
-
-        // Initialize data structures
-        initializePartitions();
-        initializeProducers();
-        initializeConsumers();
-
-        // Update canvas height to accommodate partitions
-        updateCanvasHeight();
-    }
-
     function initializePartitions() {
         partitions = [];
 
-        for (let i = 0; i < partitionCount; i++) {
+        for (let i = 0; i < Config.partitionsAmount; i++) {
             partitions.push({
                 id: i,
                 y: CANVAS_PARTITION_START_Y + i * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING),
@@ -395,15 +292,15 @@ const sketch = (p) => {
 
         // Calculate the top and bottom Y coordinates of partitions for centering
         const topPartitionY = CANVAS_PARTITION_START_Y;
-        const bottomPartitionY = CANVAS_PARTITION_START_Y + (partitionCount - 1) * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING);
+        const bottomPartitionY = CANVAS_PARTITION_START_Y + (Config.partitionsAmount - 1) * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING);
 
-        for (let i = 0; i < producerCount; i++) {
+        for (let i = 0; i < Config.producersAmount; i++) {
             // Generate a stable color based on index
-            const hue = p.map(i, 0, producerCount, 0, 360);
+            const hue = p.map(i, 0, Config.producersAmount, 0, 360);
             const color = colorFromHSB(hue, 70, 90);
 
             // Initially position producers evenly across the partition range
-            const y = p.map(i, 0, Math.max(1, producerCount - 1),
+            const y = p.map(i, 0, Math.max(1, Config.producersAmount - 1),
                 topPartitionY + CANVAS_PARTITION_HEIGHT / 2,
                 bottomPartitionY + CANVAS_PARTITION_HEIGHT / 2);
 
@@ -432,15 +329,19 @@ const sketch = (p) => {
         consumers = [];
 
         // If no consumers requested, just return
-        if (consumerCount <= 0) return;
+        if (Config.consumersAmount <= 0) return;
 
         // Get partition assignments using the rebalance algorithm
-        let partitionAssignments = rebalanceConsumerGroup(partitionCount, consumerCount, consumerAssignmentStrategy);
+        let partitionAssignments = rebalanceConsumerGroup(
+            Config.partitionsAmount,
+            Config.consumersAmount,
+            Config.consumerAssignmentStrategy
+        );
 
-        for (let i = 0; i < consumerCount; i++) {
+        for (let i = 0; i < Config.consumersAmount; i++) {
             // Find partitions assigned to this consumer
             const assignedPartitions = [];
-            for (let j = 0; j < partitionCount; j++) {
+            for (let j = 0; j < Config.partitionsAmount; j++) {
                 if (partitionAssignments[j] === i) {
                     assignedPartitions.push(j);
                 }
@@ -455,11 +356,11 @@ const sketch = (p) => {
                 avgY = avgY / assignedPartitions.length;
             } else {
                 // Default position for unassigned consumers
-                avgY = CANVAS_PARTITION_START_Y + partitionCount * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING) + 50 + i * 70;
+                avgY = CANVAS_PARTITION_START_Y + Config.partitionsAmount * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING) + 50 + i * 70;
             }
 
             // Generate a stable color based on index (distinct from producers)
-            const hue = p.map(i, 0, Math.max(1, consumerCount - 1), 180, 360);
+            const hue = p.map(i, 0, Math.max(1, Config.consumersAmount - 1), 180, 360);
             const color = colorFromHSB(hue, 70, 80);
 
             consumers.push({
@@ -470,7 +371,7 @@ const sketch = (p) => {
                 // Structure for concurrent processing
                 activePartitions: {}, // Map of partitionId -> record being processed
                 processingTimes: {}, // Map of recordId -> {startTime, endTime}
-                throughputMax: consumerThroughputMaxInBytes, // Bytes per second this consumer can process
+                throughputMax: Config.consumerThroughputMaxInBytes, // Bytes per second this consumer can process
                 processingQueues: {}, // Map of partitionId -> queue of records waiting
                 transitRecords: []
             });
@@ -492,7 +393,7 @@ const sketch = (p) => {
         }
 
         // Only adjust positions if we have consumers
-        if (consumerCount > 0) {
+        if (Config.consumersAmount > 0) {
             adjustConsumerPositions();
         }
     }
@@ -513,7 +414,7 @@ const sketch = (p) => {
         // For unassigned consumers (those with no partitions), distribute them evenly
         const unassignedConsumers = consumers.filter(c => c.assignedPartitions.length === 0);
         if (unassignedConsumers.length > 0) {
-            const bottomY = CANVAS_PARTITION_START_Y + partitionCount * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING) + 50;
+            const bottomY = CANVAS_PARTITION_START_Y + Config.partitionsAmount * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING) + 50;
 
             for (let i = 0; i < unassignedConsumers.length; i++) {
                 unassignedConsumers[i].y = bottomY + i * MIN_CONSUMER_SPACING;
@@ -618,7 +519,7 @@ const sketch = (p) => {
         const minHeight = 700; // Minimum canvas height
 
         // Find the lowest element (partition, consumer, or producer)
-        let lowestY = CANVAS_PARTITION_START_Y + partitionCount * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING);
+        let lowestY = CANVAS_PARTITION_START_Y + Config.partitionsAmount * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING);
 
         // Check if any consumers are lower
         for (const consumer of consumers) {
@@ -645,77 +546,13 @@ const sketch = (p) => {
         p.resizeCanvas(CANVAS_WIDTH, canvasHeightDynamic);
     }
 
-    function handleControlChanges() {
-        // Get values from sliders
-        if (parseInt(partitionSlider.value()) !== partitionCount) {
-            partitionCount = parseInt(partitionSlider.value());
-            updatePartitions();
-        }
-
-        if (parseInt(producerSlider.value()) !== producerCount) {
-            producerCount = parseInt(producerSlider.value());
-            updateProducers();
-        }
-
-        if (parseInt(consumerSlider.value()) !== consumerCount) {
-            consumerCount = parseInt(consumerSlider.value());
-            updateConsumers();
-        }
-
-        // Check if assignment strategy select exists and has changed
-        if (consumerAssignmentStrategySelect) {
-            const currentStrategy = consumerAssignmentStrategySelect.value();
-            if (currentStrategy !== consumerAssignmentStrategy) {
-                consumerAssignmentStrategy = currentStrategy;
-                // Only update consumers if there are any
-                if (consumerCount > 0) {
-                    updateConsumers();
-                }
-            }
-        }
-
-        // Update consumer processing capacity
-        consumerThroughputMaxInBytes = parseInt(processingCapacitySlider.value());
-        // Update all existing consumers
-        for (const consumer of consumers) {
-            consumer.throughputMax = consumerThroughputMaxInBytes;
-        }
-
-        // Update simple settings
-        producerRate = parseInt(produceRateSlider.value());
-        recordKeyRange = parseInt(keyRangeSlider.value());
-        producerDelayRandomFactor = parseFloat(produceRandomnessSlider.value());
-
-        // Handle value size validation
-        let newMinValueSize = parseInt(minValueSizeSlider.value());
-        let newMaxValueSize = parseInt(maxValueSizeSlider.value());
-
-        // Ensure max value is always >= min value
-        if (newMaxValueSize < newMinValueSize) {
-            if (recordValueSizeMin !== newMinValueSize) {
-                // Min changed, update max to match
-                maxValueSizeSlider.value(newMinValueSize);
-                maxValueSizeInput.value(newMinValueSize);
-                newMaxValueSize = newMinValueSize;
-            } else {
-                // Max changed, update min to match
-                minValueSizeSlider.value(newMaxValueSize);
-                minValueSizeInput.value(newMaxValueSize);
-                newMinValueSize = newMaxValueSize;
-            }
-        }
-
-        recordValueSizeMin = newMinValueSize;
-        recordValueSizeMax = newMaxValueSize;
-    }
-
     // ------ STATE UPDATES ------
     function updatePartitions() {
         // Save existing records and offsets
         const oldRecords = {};
         const oldOffsets = {};
         for (let i = 0; i < partitions.length; i++) {
-            if (i < partitionCount) {
+            if (i < Config.partitionsAmount) {
                 oldRecords[i] = partitions[i].records;
                 oldOffsets[i] = partitions[i].currentOffset || 0;
             }
@@ -725,7 +562,7 @@ const sketch = (p) => {
         initializePartitions();
 
         // Restore records and offsets where possible
-        for (let i = 0; i < partitionCount; i++) {
+        for (let i = 0; i < Config.partitionsAmount; i++) {
             if (oldRecords[i]) {
                 partitions[i].records = oldRecords[i];
             }
@@ -749,7 +586,7 @@ const sketch = (p) => {
         initializeProducers();
 
         // Restore metrics where applicable
-        for (let i = 0; i < producerCount && i < Object.keys(oldMetrics).length; i++) {
+        for (let i = 0; i < Config.producersAmount && i < Object.keys(oldMetrics).length; i++) {
             if (oldMetrics[i]) {
                 metrics.producers[i] = oldMetrics[i];
             }
@@ -768,14 +605,14 @@ const sketch = (p) => {
         initializeConsumers();
 
         // Restore metrics where applicable
-        for (let i = 0; i < consumerCount && i < Object.keys(oldMetrics).length; i++) {
+        for (let i = 0; i < Config.consumersAmount && i < Object.keys(oldMetrics).length; i++) {
             if (oldMetrics[i]) {
                 metrics.consumers[i] = oldMetrics[i];
             }
         }
 
         // Restore processing state for assigned partitions
-        for (let i = 0; i < consumerCount && i < oldConsumers.length; i++) {
+        for (let i = 0; i < Config.consumersAmount && i < oldConsumers.length; i++) {
             // Copy transit records for partitions still assigned
             consumers[i].transitRecords = oldConsumers[i].transitRecords?.filter(record => {
                 return consumers[i].assignedPartitions.includes(parseInt(record.partitionId));
@@ -820,10 +657,10 @@ const sketch = (p) => {
         for (const producer of producers) {
             // Calculate base time between records in milliseconds
             // Apply random delay factor if configured
-            let actualDelay = 1000 / producerRate;
-            if (producerDelayRandomFactor > 0) {
+            let actualDelay = 1000 / Config.producerRate;
+            if (Config.producerDelayRandomFactor > 0) {
                 // Calculate a random factor between 1.0 and (1.0 + producerDelayRandomFactor)
-                const randomFactor = 1.0 + p.random(0, producerDelayRandomFactor);
+                const randomFactor = 1.0 + p.random(0, Config.producerDelayRandomFactor);
                 actualDelay *= randomFactor;
             }
 
@@ -840,10 +677,10 @@ const sketch = (p) => {
 
     function createAndEmitRecord(producer) {
         // Generate record characteristics
-        const recordSize = p.random(recordValueSizeMin, recordValueSizeMax);
+        const recordSize = p.random(Config.recordValueSizeMin, Config.recordValueSizeMax);
         const recordRadius = calculateRecordRadius(recordSize);
-        const recordKey = p.int(p.random(1, recordKeyRange + 1));
-        const partitionId = recordKey % partitionCount;
+        const recordKey = p.int(p.random(1, Config.recordKeyRange + 1));
+        const partitionId = recordKey % Config.partitionsAmount;
         const recordSpeed = calculateRecordSpeedMS(recordSize);
         const eventTime = p.millis(); // Add creation timestamp
 
@@ -902,20 +739,20 @@ const sketch = (p) => {
 
     function calculateRecordRadius(size) {
         // Handle edge case when min and max are equal
-        if (recordValueSizeMin === recordValueSizeMax) {
+        if (Config.recordValueSizeMin === Config.recordValueSizeMax) {
             return CANVAS_RECORD_RADIUS_MAX;
         }
 
         // Handle edge case when min and max are invalid
-        if (recordValueSizeMin > recordValueSizeMax) {
+        if (Config.recordValueSizeMin > Config.recordValueSizeMax) {
             return (CANVAS_RECORD_RADIUS_MIN + CANVAS_RECORD_RADIUS_MAX) / 2;
         }
 
         // Linear mapping from size to radius
         return p.map(
             size,
-            recordValueSizeMin,
-            recordValueSizeMax,
+            Config.recordValueSizeMin,
+            Config.recordValueSizeMax,
             CANVAS_RECORD_RADIUS_MIN,
             CANVAS_RECORD_RADIUS_MAX
         );
@@ -925,7 +762,7 @@ const sketch = (p) => {
     function calculateRecordSpeedMS(recordSize) {
         // Calculate transfer time in milliseconds
         // Formula: time (ms) = size (bytes) / bandwidth (bytes/s) * 1000
-        return (recordSize / partitionBandwidth) * 1000;
+        return (recordSize / Config.partitionBandwidth) * 1000;
     }
 
     // Function to update all existing record speeds
