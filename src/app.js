@@ -13,7 +13,6 @@ const sketch = (p) => {
     const CANVAS_CONSUMER_POSITION_X = CANVAS_PARTITION_START_X + CANVAS_PARTITION_WIDTH + 50;
     const CANVAS_RECORD_RADIUS_MAX = 15;
     const CANVAS_RECORD_RADIUS_MIN = 6;
-    const ANIMATION_RECORD_SPEED = 2.0; // Visual speed for record movement (doesn't affect processing)
     const ANIMATION_PRODUCER_LINE_DURATION = 400;
 
     // Dynamic canvas height based on content
@@ -401,8 +400,7 @@ const sketch = (p) => {
             producers.push({
                 id: i,
                 y: y,
-                color: color,
-                nextProduceTime: p.frameCount + i * 10 // Stagger initial production
+                color: color
             });
 
             // Initialize producer metrics
@@ -809,19 +807,30 @@ const sketch = (p) => {
         consumeRecords();
     }
 
-    // ------ BUSINESS LOGIC ------
     function produceRecords() {
         // Process producer effects first
         updateProducerEffects();
 
+        const currentTime = p.millis();
+
         // Check for new records to produce
         for (const producer of producers) {
-            if (p.frameCount >= producer.nextProduceTime) {
+            // Calculate base time between records in milliseconds
+            // Apply random delay factor if configured
+            let actualDelay = 1000 / producerRate;
+            if (producerDelayRandomFactor > 0) {
+                // Calculate a random factor between 1.0 and (1.0 + producerDelayRandomFactor)
+                const randomFactor = 1.0 + p.random(0, producerDelayRandomFactor);
+                actualDelay *= randomFactor;
+            }
+
+            // If this is the first record or enough time has elapsed since last production
+            if (!producer.lastProduceTime || currentTime - producer.lastProduceTime >= actualDelay) {
                 // Create and add a new record
                 createAndEmitRecord(producer);
 
-                // Schedule next production time
-                scheduleNextProduction(producer);
+                // Update last produce time to current time
+                producer.lastProduceTime = currentTime;
             }
         }
     }
@@ -927,19 +936,6 @@ const sketch = (p) => {
                 }
             }
         }
-    }
-
-    function scheduleNextProduction(producer) {
-        // Base time between records in frames (60 frames per second)
-        const framesPerRecord = 60 / producerRate;
-
-        // Apply random delay in seconds
-        let randomTimeFrames;
-        const randomDelaySec = p.random(0, producerDelayRandomFactor);
-        randomTimeFrames = randomDelaySec * 60;
-
-        // Set next production time
-        producer.nextProduceTime = p.frameCount + p.int(framesPerRecord + randomTimeFrames);
     }
 
     function addProducerLineToPartitionEffect(producer, partitionId) {
