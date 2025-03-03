@@ -1,4 +1,4 @@
-import { formatBytes } from '../utils.js';
+import { generateConsistentColor } from '../utils.js';
 
 export function createPartitionRenderer(p, startX, startY, partitionWidth, partitionHeight, partitionSpacing) {
     // Draw a single partition with its records
@@ -21,37 +21,56 @@ export function createPartitionRenderer(p, startX, startY, partitionWidth, parti
         p.text(`P${index} (${partition.currentOffset})`, startX - 10, partition.y + partitionHeight / 2);
     }
 
-    // Draw all records within a partition
-    function drawPartitionRecords(partition) {
-        for (const record of partition.records) {
-            // Draw Record circle
-            p.fill(record.color);
-            p.stroke(0);
-            p.strokeWeight(1);
-            p.ellipse(record.x, partition.y + partitionHeight / 2, record.radius * 2, record.radius * 2);
+// Draw all records within a partition
+function drawPartitionRecords(partition) {
+    for (const record of partition.records) {
+        // Save drawing state
+        p.push();
 
-            p.fill(255);
-            p.noStroke();
-            p.textAlign(p.CENTER, p.CENTER);
-            p.textSize(10);
-            p.text(record.key, record.x, partition.y + partitionHeight / 2);
+        // Generate fill color based on record key
+        const fillColor = generateConsistentColor(p, record.key % 128, 0.75, 70, 90);
+        const centerY = partition.y + partitionHeight / 2;
 
-            // Processing Records circular progress bar
-            if (record.isBeingProcessed && record.processingProgress !== undefined) {
-                p.noFill();
-                p.stroke(0, 179, 0);
-                p.strokeWeight(2);
-                p.arc(
-                    record.x,
-                    partition.y + partitionHeight / 2,
-                    (record.radius + 1) * 2,
-                    (record.radius + 1) * 2,
-                    -p.HALF_PI,
-                    -p.HALF_PI + p.TWO_PI * record.processingProgress
-                );
-            }
+        // Draw Record circle with producer color fill
+        p.fill(record.color);
+        p.stroke(record.color);
+        p.strokeWeight(2);
+        p.ellipse(record.x, centerY, record.radius * 2, record.radius * 2);
+
+        // Draw rectangle with key color
+        const rectWidth = record.radius * 1.4;
+        const rectHeight = 10;
+        p.fill(fillColor);
+        p.noStroke();
+        p.rectMode(p.CENTER);
+        p.rect(record.x, centerY, rectWidth, rectHeight);
+
+        // Draw key text
+        p.fill(0);
+        p.noStroke();
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(10);
+        p.text(record.key, record.x, centerY);
+
+        // Processing Records circular progress bar
+        if (record.isBeingProcessed && record.processingProgress !== undefined) {
+            p.noFill();
+            p.stroke(0, 100, 0);
+            p.strokeWeight(3);
+            p.arc(
+                record.x,
+                centerY,
+                (record.radius + 1) * 2,
+                (record.radius + 1) * 2,
+                -p.HALF_PI,
+                -p.HALF_PI + p.TWO_PI * record.processingProgress
+            );
         }
+
+        // Restore drawing state
+        p.pop();
     }
+}
 
     function drawPartitionRecordsMovement(partitions, eventEmitter) {
         // Process each partition

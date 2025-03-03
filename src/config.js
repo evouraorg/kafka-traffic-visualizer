@@ -77,7 +77,7 @@ export const ConfigMetadata = {
     recordKeyRange: {
         min: 1,
         max: 128,
-        default: 16,
+        default: 4,
         type: 'number'
     }
 };

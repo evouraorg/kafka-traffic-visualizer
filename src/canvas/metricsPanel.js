@@ -17,7 +17,7 @@ export function createMetricsPanelRenderer(p, panelX = 20, panelY = 20) {
     }
 
     function drawMetricsPanel(metrics, consumers = []) {
-        const panelWidth = 160;
+        const panelWidth = 200;
         const panelHeight = 110; // Increased to fit new metrics
 
         // Calculate active consumer count (consumers with assigned partitions)
@@ -52,7 +52,7 @@ export function createMetricsPanelRenderer(p, panelX = 20, panelY = 20) {
             panelX + 5, panelY + 40);
         p.text(`Avg Processing: ${Math.round(metrics.global.avgProcessingTimeMs)}ms`,
             panelX + 5, panelY + 55);
-        p.text(`Consumers Throughput: ${formatBytes(consumerThroughput)}`,
+        p.text(`Consumers max throughput: ${formatBytes(consumerThroughput)}`,
             panelX + 5, panelY + 70);
         p.text(`Elapsed ms: ${elapsedMs.toFixed(0)}`,
             panelX + 5, panelY + 85);

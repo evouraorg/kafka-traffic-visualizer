@@ -3,6 +3,7 @@ import createProducerEffectsManager, {createProducerRenderer} from "./canvas/pro
 import {createPartitionRenderer} from './canvas/partitions.js';
 import createConfigManager, {Config} from './config.js';
 import sharedState from './sharedState.js';
+import {generateConsistentColor} from './utils.js';
 
 const sketchSimulation = (p) => {
     // ------ Canvas, UI and Animations ------
@@ -138,6 +139,8 @@ const sketchSimulation = (p) => {
         initializePartitions();
         initializeProducers();
         initializeConsumers();
+
+        setupOrderingIssuesDetection();
 
         // Update canvas height to accommodate partitions
         updateCanvasHeight();
@@ -284,9 +287,8 @@ const sketchSimulation = (p) => {
         const bottomPartitionY = CANVAS_PARTITION_START_Y + (Config.partitionsAmount - 1) * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING);
 
         for (let i = 0; i < Config.producersAmount; i++) {
-            // Generate a stable color based on index
-            const hue = p.map(i, 0, Config.producersAmount, 0, 360);
-            const color = colorFromHSB(hue, 70, 90);
+
+            const color = generateConsistentColor(p, i);
 
             // Initially position producers evenly across the partition range
             const y = p.map(i, 0, Math.max(1, Config.producersAmount - 1),
@@ -348,9 +350,7 @@ const sketchSimulation = (p) => {
                 avgY = CANVAS_PARTITION_START_Y + Config.partitionsAmount * (CANVAS_PARTITION_HEIGHT + CANVAS_PARTITION_HEIGHT_SPACING) + 50 + i * 70;
             }
 
-            // Generate a stable color based on index (distinct from producers)
-            const hue = p.map(i, 0, Math.max(1, Config.consumersAmount - 1), 180, 360);
-            const color = colorFromHSB(hue, 70, 80);
+            const color = generateConsistentColor(p, i, 0.5, 70, 90);
 
             consumers.push({
                 id: i,
@@ -535,7 +535,80 @@ const sketchSimulation = (p) => {
         p.resizeCanvas(CANVAS_WIDTH, canvasHeightDynamic);
     }
 
-    // ------ STATE UPDATES ------
+    function setupOrderingIssuesDetection() {
+        // Track the last processed event time per key
+        const keyProcessingHistory = {};
+
+        // Add detection to the RECORD_PROCESSING_COMPLETED event
+        eventEmitter.on(EVENTS.RECORD_PROCESSING_COMPLETED, (data) => {
+            const key = data.key;
+
+            // Initialize history for this key if needed
+            if (!keyProcessingHistory[key]) {
+                keyProcessingHistory[key] = [];
+            }
+
+            // Add this record to the processing history
+            keyProcessingHistory[key].push({
+                recordId: data.id,
+                eventTime: data.eventTime,
+                processingTime: p.millis(),
+                offset: data.offset,
+                partition: data.partitionId,
+                consumerId: data.consumerId
+            });
+
+            // Get the history for this key and sort by processing time
+            const history = keyProcessingHistory[key];
+
+            // Only check for out-of-order if we have more than one record
+            if (history.length > 1) {
+                // Sort by processing time to see the order they were actually processed
+                const processedOrder = [...history].sort((a, b) => a.processingTime - b.processingTime);
+
+                // Find the most recently processed record (last in the sorted array)
+                const newestProcessed = processedOrder[processedOrder.length - 1];
+
+                // Look through previously processed records to find any out-of-order conditions
+                for (let i = processedOrder.length - 2; i >= 0; i--) {
+                    // If this record has a later event time but was processed earlier
+                    if (processedOrder[i].eventTime > newestProcessed.eventTime) {
+                        const olderRecord = newestProcessed;
+                        const newerRecord = processedOrder[i];
+                        const timeDifference = newerRecord.eventTime - olderRecord.eventTime;
+
+                        console.warn("Out of order processing detected: {" +
+                            "\"key\": " + key + ", " +
+                            "\"olderRecord\": {" +
+                            "\"id\": " + olderRecord.recordId + ", " +
+                            "\"eventTime\": " + olderRecord.eventTime.toFixed(1) + ", " +
+                            "\"partition\": " + olderRecord.partition + ", " +
+                            "\"consumerId\": " + olderRecord.consumerId +
+                            "}, " +
+                            "\"newerRecord\": {" +
+                            "\"id\": " + newerRecord.recordId + ", " +
+                            "\"eventTime\": " + newerRecord.eventTime.toFixed(1) + ", " +
+                            "\"partition\": " + newerRecord.partition + ", " +
+                            "\"consumerId\": " + newerRecord.consumerId +
+                            "}, " +
+                            "\"timeDifference\": " + timeDifference.toFixed(1) + " ms" +
+                            "}");
+
+                        // Log only once per event
+                        break;
+                    }
+                }
+            }
+
+            // Limit history size to prevent memory issues
+            if (history.length > 100) {
+                keyProcessingHistory[key] = history.slice(-100);
+            }
+        });
+
+        return {keyProcessingHistory};
+    }
+
     function updatePartitions() {
         // Save existing records and offsets
         const oldRecords = {};
