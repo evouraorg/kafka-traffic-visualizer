@@ -83,11 +83,45 @@
             margin: 0 auto;
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
         }
+
+        .author-info {
+            text-align: center;
+            margin: 0 auto 20px auto;
+            color: #666;
+            font-size: 0.9rem;
+            max-width: 800px;
+            line-height: 1.5;
+        }
+        
+        .author-info a {
+            color: #0066cc;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+        }
+        
+        .author-info a:hover {
+            text-decoration: underline;
+        }
+        
+        .author-info span {
+            margin: 0 8px;
+        }
     </style>
 </head>
 <body>
 <div class="container">
     <h1>Kafka Traffic visual "Simulation"</h1>
+    
+    <div class="author-info">
+        Created by <a href="https://www.linkedin.com/in/renatomefi/" target="_blank">Renato Mefi</a>
+        <span>|</span>
+        <a href="https://github.com/evouraorg/kafka-traffic-visualizer" target="_blank">GitHub Repo</a>
+        <span>|</span>
+        <a href="https://github.com/evouraorg/kafka-traffic-visualizer/blob/main/LICENSE.md" target="_blank">CC BY-NC 4.0 License</a>
+        <div></div>
+        Sponsored by <a href="https://evoura.com/" target="_blank">Evoura - Data Streaming and EDA experts consultancy</a>
+    </div>
 
     <div class="control-panel">
         <div class="control-row">

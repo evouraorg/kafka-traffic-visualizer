@@ -43,3 +43,6 @@
  5. Make the emit record look more like a kafka producer
 
 6. consumerThroughputMaxInBytes and processingCApacitySlider should be the same
+
+7. partition algorithms configurable, instead of only modulo
+

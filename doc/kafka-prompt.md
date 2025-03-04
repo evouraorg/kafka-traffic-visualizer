@@ -47,6 +47,3 @@ Code style:
 - Consider performing data structures
 - UI/Canvas/Drawing/Controls code should be separated from the Traffic simulation code
 - do not pass objects by reference to update them within a function, always return a new object with the updated values
-
-
-## Chat history
