@@ -4,6 +4,8 @@
 This project simulates a Kafka-like distributed streaming system with Producers, Partitions, and Consumers. It visualizes how data flows through the system and provides real-time metrics on performance.
 It's useful to understand how records flow within the system and distribute across Consumers.
 
+[🔥 Go play now on our online version 🔥](https://evoura.com/kafka-traffic-visualizer/)
+
 ![Kafka-like Stream Processing Simulation](./doc/readme-image.png)
 
 ## License and author
@@ -22,6 +24,7 @@ $ npm start
 ```
 
 Visit [http://localhost:1234](http://localhost:1234)
+‼️ Don't forget to open your browser console to see the logs
 
 # Key features
 

@@ -1,12 +1,16 @@
 {
   "name": "kafka-traffic-visualizer",
   "version": "0.1.0",
-  "main": "src/app.js",
   "scripts": {
     "start": "parcel src/index.html",
     "build": "parcel build src/index.html",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "targets": {
+    "default": {
+      "publicUrl": "/kafka-traffic-visualizer/"
+    }
+},
   "repository": {
     "type": "git",
     "url": "git+https://github.com/evouraorg/kafka-traffic-visualizer.git"
